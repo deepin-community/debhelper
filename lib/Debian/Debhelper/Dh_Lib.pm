@@ -17,7 +17,7 @@ no feature 'unicode_strings';
 
 use constant {
 	# Lowest compat level supported
-	'MIN_COMPAT_LEVEL' => 5,
+	'MIN_COMPAT_LEVEL' => 7,
 	# Lowest compat level that does *not* cause deprecation
 	# warnings
 	'LOWEST_NON_DEPRECATED_COMPAT_LEVEL' => 10,
@@ -54,7 +54,7 @@ use constant {
 	'DBGSYM_PACKAGE_TYPE' => DEFAULT_PACKAGE_TYPE,
 	# Lowest compat level supported that is not scheduled for removal.
 	# - Set to MIN_COMPAT_LEVEL when there are no pending compat removals.
-	'MIN_COMPAT_LEVEL_NOT_SCHEDULED_FOR_REMOVAL' => 7,
+	'MIN_COMPAT_LEVEL_NOT_SCHEDULED_FOR_REMOVAL' => MIN_COMPAT_LEVEL,
 };
 
 
@@ -124,6 +124,7 @@ qw(
 	package_multiarch
 	package_section
 	package_arch
+	package_type
 	process_pkg
 	compute_doc_main_package
 	isnative
@@ -133,6 +134,7 @@ qw(
 qw(
 	basename
 	dirname
+	mkdirs
 	install_file
 	install_prog
 	install_lib
@@ -193,6 +195,7 @@ qw(
 qw(
 	open_gz
 	get_source_date_epoch
+	get_non_binnmu_date_epoch
 	deprecated_functionality
 ),
 	# Special-case functionality (e.g. tool specific), debhelper(-core) functionality and deprecated functions
@@ -202,6 +205,7 @@ qw(
 	write_log
 	commit_override_log
 	debhelper_script_subst
+	debhelper_script_per_package_subst
 	is_make_jobserver_unavailable
 	clean_jobserver_makeflags
 	set_buildflags
@@ -225,6 +229,7 @@ our $PKGVERSION_REGEX = qr/
                  (?: - [0-9A-Za-z.+:~]+ )*   # Optional debian revision (+ upstreams versions with hyphens)
                           /xoa;
 our $MAINTSCRIPT_TOKEN_REGEX = qr/[A-Za-z0-9_.+]+/o;
+our $TOOL_NAME = basename($0);
 
 # From Policy 5.1:
 #
@@ -372,7 +377,7 @@ sub END {
 	# expect.
 	return if not -f 'debian/control';
 	if (compat(9, 1) || $ENV{DH_INTERNAL_OVERRIDE}) {
-		write_log(basename($0), @{$dh{DOPACKAGES}});
+		write_log($TOOL_NAME, @{$dh{DOPACKAGES}});
 	}
 }
 
@@ -484,6 +489,35 @@ sub print_and_doit_noerror {
 	goto \&_doit;
 }
 
+sub _post_fork_setup_and_exec {
+	my ($close_stdin, $options, @cmd) = @_;
+	if (defined($options)) {
+		if (defined(my $dir = $options->{chdir})) {
+			if ($dir ne '.') {
+				chdir($dir) or error("chdir(\"${dir}\") failed: $!");
+			}
+		}
+		if ($close_stdin) {
+			open(STDIN, '<', '/dev/null') or error("redirect STDIN failed: $!");
+		}
+		if (defined(my $output = $options->{stdout})) {
+			open(STDOUT, '>', $output) or error("redirect STDOUT failed: $!");
+		}
+		if (defined(my $update_env = $options->{update_env})) {
+			while (my ($k, $v) = each(%{$update_env})) {
+				if (defined($v)) {
+					$ENV{$k} = $v;
+				} else {
+					delete($ENV{$k});
+				}
+			}
+		}
+	}
+	# Force execvp call to avoid shell.  Apparently, even exec can
+	# involve a shell if you don't do this.
+	exec { $cmd[0] } @cmd or error('exec (for cmd: ' . escape_shell(@cmd) . ") failed: $!");
+}
+
 sub _doit {
 	my (@cmd) = @_;
 	my $options = ref($cmd[0]) ? shift(@cmd) : undef;
@@ -497,29 +531,7 @@ sub _doit {
 	return 1 if $dh{NO_ACT};
 	my $pid = fork() // error("fork(): $!");
 	if (not $pid) {
-		if (defined($options)) {
-			if (defined(my $dir = $options->{chdir})) {
-				if ($dir ne '.') {
-					chdir($dir) or error("chdir(\"${dir}\") failed: $!");
-				}
-			}
-			open(STDIN, '<', '/dev/null') or error("redirect STDIN failed: $!");
-			if (defined(my $output = $options->{stdout})) {
-				open(STDOUT, '>', $output) or error("redirect STDOUT failed: $!");
-			}
-			if (defined(my $update_env = $options->{update_env})) {
-				while (my ($k, $v) = each(%{$update_env})) {
-					if (defined($v)) {
-						$ENV{$k} = $v;
-					} else {
-						delete($ENV{$k});
-					}
-				}
-			}
-		}
-		# Force execvp call to avoid shell.  Apparently, even exec can
-		# involve a shell if you don't do this.
-		exec { $cmd[0] } @cmd;
+		_post_fork_setup_and_exec(1, $options, @cmd) // error("Assertion error: sub should not return!");
 	}
 	return waitpid($pid, 0) == $pid && $? == 0;
 }
@@ -528,8 +540,6 @@ sub _format_cmdline {
 	my (@cmd) = @_;
 	my $options = ref($cmd[0]) ? shift(@cmd) : {};
 	my $cmd_line = escape_shell(@cmd);
-	use Carp qw(confess);
-	confess("??") if ref($options) ne 'HASH';
 	if (defined(my $update_env = $options->{update_env})) {
 		my $need_env = 0;
 		my @params;
@@ -560,8 +570,12 @@ sub _format_cmdline {
 
 sub qx_cmd {
 	my (@cmd) = @_;
+	my $options = ref($cmd[0]) ? shift(@cmd) : undef;
 	my ($output, @output);
-	open(my $fd, '-|', @cmd) or error('fork+exec (' . escape_shell(@cmd) . "): $!");
+	my $pid = open(my $fd, '-|') // error('fork (for cmd: ' . escape_shell(@cmd) . ") failed: $!");
+	if ($pid == 0) {
+		_post_fork_setup_and_exec(0, $options, @cmd) // error("Assertion error: sub should not return!");
+	}
 	if (wantarray) {
 		@output = <$fd>;
 	} else {
@@ -655,28 +669,42 @@ sub error_exitcode {
 	}
 }
 
-sub install_dir {
-	my @to_create = grep { not -d $_ } @_;
-	return if not @to_create;
+
+sub _mkdirs {
+	my ($log, @dirs) = @_;
+	return if not @dirs;
+	if ($log && $dh{VERBOSE}) {
+		verbose_print(sprintf('install -m0755 -d %s', escape_shell(@dirs)));
+	}
+	return 1 if $dh{NO_ACT};
 	state $_loaded;
 	if (not $_loaded) {
 		$_loaded++;
 		require File::Path;
 	}
-	verbose_print(sprintf('install -d %s', escape_shell(@to_create)))
-		if $dh{VERBOSE};
-	return 1 if $dh{NO_ACT};
+	my %opts = (
+		# install -d uses 0755 (no umask), make_path uses 0777 (& umask) by default.
+		# Since we claim to run install -d, then ensure the mode is correct.
+		'chmod' => 0755,
+	);
 	eval {
-		File::Path::make_path(@to_create, {
-			# install -d uses 0755 (no umask), make_path uses 0777 (& umask) by default.
-			# Since we claim to run install -d, then ensure the mode is correct.
-			'chmod' => 0755,
-		});
+		File::Path::make_path(@dirs, \%opts);
 	};
 	if (my $err = "$@") {
 		$err =~ s/\s+at\s+\S+\s+line\s+\d+\.?\n//;
 		error($err);
 	}
+	return;
+}
+
+sub mkdirs {
+	my @to_create = grep { not -d $_ } @_;
+	return _mkdirs(0, @to_create);
+}
+
+sub install_dir {
+	my @dirs = @_;
+	return _mkdirs(1, @dirs);
 }
 
 sub rename_path {
@@ -849,7 +877,7 @@ sub error {
 	my ($message) = @_;
 	# ensure the error code is well defined.
 	$! = 255;
-	die(_color(basename($0), 'bold') . ': ' . _color('error', 'bold red') . ": $message\n");
+	die(_color($TOOL_NAME, 'bold') . ': ' . _color('error', 'bold red') . ": $message\n");
 }
 
 # Output a warning.
@@ -857,7 +885,7 @@ sub warning {
 	my ($message) = @_;
 	$message //= '';
 
-	print STDERR _color(basename($0), 'bold') . ': ' . _color('warning', 'bold yellow') . ": $message\n";
+	print STDERR _color($TOOL_NAME, 'bold') . ': ' . _color('warning', 'bold yellow') . ": $message\n";
 }
 
 # Returns the basename of the argument passed to it.
@@ -884,6 +912,8 @@ my $compat_from_bd;
 {
 	my $check_pending_removals = get_buildoption('dherroron', '') eq 'obsolete-compat-levels' ? 1 : 0;
 	my $warned_compat = $ENV{DH_INTERNAL_TESTSUITE_SILENT_WARNINGS} ? 1 : 0;
+	my $declared_compat;
+	my $delared_compat_source;
 	my $c;
 
 	# Used mainly for testing
@@ -892,51 +922,71 @@ my $compat_from_bd;
 		undef $compat_from_bd;
 	}
 
-	sub compat {
-		my $num=shift;
-		my $nowarn=shift;
+	sub _load_compat_info {
+		my ($nowarn) = @_;
 
 		getpackages() if not defined($compat_from_bd);
-	
-		if (! defined $c) {
-			$c=1;
-			if (-e 'debian/compat') {
-				open(my $compat_in, '<', "debian/compat") || error "debian/compat: $!";
-				my $l=<$compat_in>;
-				close($compat_in);
-				if (! defined $l || ! length $l) {
-					error("debian/compat must contain a positive number (found an empty first line)");
 
-				}
-				else {
-					chomp $l;
-					my $new_compat = $l;
-					$new_compat =~ s/^\s*+//;
-					$new_compat =~ s/\s*+$//;
-					if ($new_compat !~ m/^\d+$/) {
-						error("debian/compat must contain a positive number (found: \"${new_compat}\")");
-					}
-					if (defined($compat_from_bd) and $compat_from_bd != -1) {
-						warning("Please specify the debhelper compat level exactly once.");
-						warning(" * debian/compat requests compat ${new_compat}.");
-						warning(" * debian/control requests compat ${compat_from_bd} via \"debhelper-compat (= ${compat_from_bd})\"");
-						warning();
-						warning("Hint: If you just added a build-dependency on debhelper-compat, then please remember to remove debian/compat");
-						warning();
-						error("debhelper compat level specified both in debian/compat and via build-dependency on debhelper-compat");
-					}
-					$c = $new_compat;
-				}
-			} elsif ($compat_from_bd != -1) {
-				$c = $compat_from_bd;
-			} elsif (not $nowarn) {
-				error("Please specify the compatibility level in debian/compat");
-			}
+		$c=1;
+		if (-e 'debian/compat') {
+			open(my $compat_in, '<', "debian/compat") || error "debian/compat: $!";
+			my $l=<$compat_in>;
+			close($compat_in);
+			if (! defined $l || ! length $l) {
+				error("debian/compat must contain a positive number (found an empty first line)");
 
-			if (defined $ENV{DH_COMPAT}) {
-				$c=$ENV{DH_COMPAT};
 			}
+			else {
+				chomp $l;
+				my $new_compat = $l;
+				$new_compat =~ s/^\s*+//;
+				$new_compat =~ s/\s*+$//;
+				if ($new_compat !~ m/^\d+$/) {
+					error("debian/compat must contain a positive number (found: \"${new_compat}\")");
+				}
+				if (defined($compat_from_bd) and $compat_from_bd != -1) {
+					warning("Please specify the debhelper compat level exactly once.");
+					warning(" * debian/compat requests compat ${new_compat}.");
+					warning(" * debian/control requests compat ${compat_from_bd} via \"debhelper-compat (= ${compat_from_bd})\"");
+					warning();
+					warning("Hint: If you just added a build-dependency on debhelper-compat, then please remember to remove debian/compat");
+					warning();
+					error("debhelper compat level specified both in debian/compat and via build-dependency on debhelper-compat");
+				}
+				$c = $new_compat;
+			}
+			$delared_compat_source = 'debian/compat';
+		} elsif ($compat_from_bd != -1) {
+			$c = $compat_from_bd;
+			$delared_compat_source = "Build-Depends: debhelper-compat (= $c)";
+		} elsif (not $nowarn) {
+			error("Please specify the compatibility level in debian/compat or via Build-Depends: debhelper-compat (= X)");
 		}
+
+		$declared_compat = int($c);
+
+		if (defined $ENV{DH_COMPAT}) {
+			my $override = $ENV{DH_COMPAT};
+			error("The environment variable DH_COMPAT must be a positive integer")
+				if $override ne q{} and $override !~ m/^\d+$/;
+			$c=int($ENV{DH_COMPAT}) if $override ne q{};
+		}
+	}
+
+	sub get_compat_info {
+		if (not $c) {
+			_load_compat_info(1);
+		}
+		return ($c, $declared_compat, $delared_compat_source);
+	}
+
+	sub compat {
+		my ($num, $nowarn) = @_;
+
+		if (not $c) {
+			_load_compat_info($nowarn);
+		}
+
 		if (not $nowarn) {
 			if ($c < MIN_COMPAT_LEVEL) {
 				error("Compatibility levels before ${\MIN_COMPAT_LEVEL} are no longer supported (level $c requested)");
@@ -1208,14 +1258,13 @@ sub autoscript {
 		}
 	}
 
-	if (-e $outfile && ($script eq 'postrm' || $script eq 'prerm')
-	   && !compat(5)) {
+	if (-e $outfile && ($script eq 'postrm' || $script eq 'prerm')) {
 		# Add fragments to top so they run in reverse order when removing.
 		if (not defined($sed) or ref($sed)) {
 			verbose_print("[META] Prepend autosnippet \"$filename\" to $script [${outfile}.new]");
 			if (not $dh{NO_ACT}) {
 				open(my $out_fd, '>', "${outfile}.new") or error("open(${outfile}.new): $!");
-				print {$out_fd} '# Automatically added by ' . basename($0) . "/${tool_version}\n";
+				print {$out_fd} '# Automatically added by ' . $TOOL_NAME . "/${tool_version}\n";
 				autoscript_sed($sed, $infile, undef, $out_fd);
 				print {$out_fd} "# End automatically added section\n";
 				open(my $in_fd, '<', $outfile) or error("open($outfile): $!");
@@ -1226,7 +1275,7 @@ sub autoscript {
 				close($out_fd) or error("close(${outfile}.new): $!");
 			}
 		} else {
-			complex_doit("echo \"# Automatically added by ".basename($0)."/${tool_version}\"> $outfile.new");
+			complex_doit("echo \"# Automatically added by ".$TOOL_NAME."/${tool_version}\"> $outfile.new");
 			autoscript_sed($sed, $infile, "$outfile.new");
 			complex_doit("echo '# End automatically added section' >> $outfile.new");
 			complex_doit("cat $outfile >> $outfile.new");
@@ -1236,13 +1285,13 @@ sub autoscript {
 		verbose_print("[META] Append autosnippet \"$filename\" to $script [${outfile}]");
 		if (not $dh{NO_ACT}) {
 			open(my $out_fd, '>>', $outfile) or error("open(${outfile}): $!");
-			print {$out_fd} '# Automatically added by ' . basename($0) . "/${tool_version}\n";
+			print {$out_fd} '# Automatically added by ' . $TOOL_NAME . "/${tool_version}\n";
 			autoscript_sed($sed, $infile, undef, $out_fd);
 			print {$out_fd} "# End automatically added section\n";
 			close($out_fd) or error("close(${outfile}): $!");
 		}
 	} else {
-		complex_doit("echo \"# Automatically added by ".basename($0)."/${tool_version}\">> $outfile");
+		complex_doit("echo \"# Automatically added by ".$TOOL_NAME."/${tool_version}\">> $outfile");
 		autoscript_sed($sed, $infile, $outfile);
 		complex_doit("echo '# End automatically added section' >> $outfile");
 	}
@@ -1311,7 +1360,7 @@ sub autoscript_sed {
                               }x;
 			print {$ofd} $line;
 		}
-		print {$ofd} '# Triggers added by ' . basename($0) . "/${tool_version}\n";
+		print {$ofd} '# Triggers added by ' . $TOOL_NAME . "/${tool_version}\n";
 		print {$ofd} "${trigger_type} ${trigger_target}\n";
 		close($ofd) or error("closing ${triggers_file}.new failed: $!");
 		close($ifd);
@@ -1328,72 +1377,99 @@ sub generated_file {
 	my $dir = "debian/.debhelper/generated/${package}";
 	my $path = "${dir}/${filename}";
 	$mkdirs //= 1;
-	install_dir($dir) if $mkdirs;
+	mkdirs($dir) if $mkdirs;
 	return $path;
+}
+
+sub _update_substvar {
+	my ($substvar_file, $update_logic, $insert_logic) = @_;
+	my @lines;
+	my $changed = 0;
+	if ( -f $substvar_file) {
+		open(my $in, '<', $substvar_file) // error("open($substvar_file): $!");
+		while (my $line = <$in>) {
+			chomp($line);
+			my $orig_value = $line;
+			my $updated_value = $update_logic->($line);
+			$changed ||= !defined($updated_value) || $orig_value ne $updated_value;
+			push(@lines, $updated_value) if defined($updated_value);
+		}
+		close($in);
+	}
+	my $len = scalar(@lines);
+	push(@lines, $insert_logic->()) if $insert_logic;
+	$changed ||= $len != scalar(@lines);
+	if ($changed && !$dh{NO_ACT}) {
+		open(my $out, '>', "${substvar_file}.new") // error("open(${substvar_file}.new, \"w\"): $!");
+		for my $line (@lines) {
+			print {$out} "$line\n";
+		}
+		close($out) // error("close(${substvar_file}.new): $!");
+		rename_path("${substvar_file}.new", $substvar_file);
+	}
+	return;
 }
 
 # Removes a whole substvar line.
 sub delsubstvar {
-	my $package=shift;
-	my $substvar=shift;
+	my ($package, $substvar) = @_;
+	my $ext = pkgext($package);
+	my $substvarfile = "debian/${ext}substvars";
 
-	my $ext=pkgext($package);
-	my $substvarfile="debian/${ext}substvars";
-
-	if (-e $substvarfile) {
-		complex_doit("grep -a -s -v '^${substvar}=' $substvarfile > $substvarfile.new || true");
-		rename_path("${substvarfile}.new", $substvarfile);
-	}
+	return _update_substvar($substvarfile, sub {
+		my ($line) = @_;
+		return $line if $line !~ m/^\Q${substvar}\E[?]?=/;
+		return;
+	});
 }
 				
 # Adds a dependency on some package to the specified
 # substvar in a package's substvar's file.
 sub addsubstvar {
-	my $package=shift;
-	my $substvar=shift;
-	my $deppackage=shift;
-	my $verinfo=shift;
-	my $remove=shift;
+	my ($package, $substvar, $deppackage, $verinfo, $remove) = @_;
+	my ($present);
+	my $ext = pkgext($package);
+	my $substvarfile = "debian/${ext}substvars";
+	my $str = $deppackage;
+	$str .= " ($verinfo)" if defined $verinfo && length $verinfo;
 
-	my $ext=pkgext($package);
-	my $substvarfile="debian/${ext}substvars";
-	my $str=$deppackage;
-	$str.=" ($verinfo)" if defined $verinfo && length $verinfo;
-
-	# Figure out what the line will look like, based on what's there
-	# now, and what we're to add or remove.
-	my $line="";
-	if (-e $substvarfile) {
-		my %items;
-		open(my $in, '<', $substvarfile) || error "read $substvarfile: $!";
-		while (<$in>) {
-			chomp;
-			if (/^\Q$substvar\E=(.*)/) {
-				%items = map { $_ => 1} split(", ", $1);
-				
-				last;
-			}
-		}
-		close($in);
-		if (! $remove) {
-			$items{$str}=1;
-		}
-		else {
-			delete $items{$str};
-		}
-		$line=join(", ", sort keys %items);
-	}
-	elsif (! $remove) {
-		$line=$str;
+	if (not defined($deppackage) and not $remove) {
+		error("Bug in helper: Must provide a value for addsubstvar (or set the remove flag, but then use delsubstvar instead)")
 	}
 
-	if (length $line) {
-		complex_doit("(grep -a -s -v ${substvar} $substvarfile; echo ".escape_shell("${substvar}=$line").") > $substvarfile.new");
-		rename_path("$substvarfile.new", $substvarfile);
+	if (defined($str) and $str =~ m/[\n]/) {
+		$str =~ s/\n/\\n/g;
+		# Per #1026014
+		warning('Unescaped newlines in the value of a substvars can cause broken substvars files (see #1025714).');
+		warning("Hint: If you really need a newline character, provide it as \"\${Newline}\".");
+		error("Bug in helper: The substvar must not contain a raw newline character (${substvar}=${str})");
 	}
-	else {
-		delsubstvar($package,$substvar);
-	}
+
+	my $update_logic = sub {
+		my ($line) = @_;
+		return $line if $line !~ m/^\Q${substvar}\E([?]?=)(.*)/;
+		my $assignment_type = $1;
+		my %items = map { $_ => 1 } split(", ", $2);
+		$present = 1;
+		if ($remove) {
+			# Unchanged; we can avoid rewriting the file.
+			return $line if not exists($items{$str});
+			delete($items{$str});
+			my $replacement = join(", ", sort(keys(%items)));
+			return "${substvar}${assignment_type}${replacement}" if $replacement ne '';
+			return;
+		}
+		# Unchanged; we can avoid rewriting the file.
+		return $line if %items and exists($items{$str});
+
+		$items{$str} = 1;
+		return "${substvar}${assignment_type}" . join(", ", sort(keys(%items)));
+	};
+	my $insert_logic = sub {
+		return ("${substvar}=${str}") if not $present and not $remove;
+		return;
+	};
+	return _update_substvar($substvarfile, $update_logic, $insert_logic);
 }
 
 sub _glob_expand_error_default_msg {
@@ -1728,6 +1804,7 @@ sub getpackages {
 
 sub _strip_spaces {
 	my ($v) = @_;
+	return if not defined($v);
 	$v =~ s/^\s++//;
 	$v =~ s/\s++$//;
 	return $v;
@@ -1955,7 +2032,7 @@ sub _parse_debian_control {
 				$package_types{$package} = _strip_spaces($field_values{'package-type'} // 'deb');
 				$package_arches{$package} = $arch;
 				$package_multiarches{$package} = _strip_spaces($field_values{'multi-arch'} // '');
-				$package_sections{$package} = _strip_spaces($field_values{'section'} // $source_section);;
+				$package_sections{$package} = _strip_spaces($field_values{'section'} // $source_section);
 				$package_cross_type{$package} = $cross_type;
 				push(@{$packages_by_type{'all-listed-in-control-file'}}, $package);
 
@@ -2125,16 +2202,23 @@ sub package_cross_type {
 	return $package_cross_type{$package} // 'host';
 }
 
+sub package_type {
+	my ($package) = @_;
+
+	if (! exists $package_types{$package}) {
+		warning "package $package is not in control info";
+		return DEFAULT_PACKAGE_TYPE;
+	}
+	return $package_types{$package};
+}
+
 # Return true if a given package is really a udeb.
 sub is_udeb {
 	my $package=shift;
 	
-	if (! exists $package_types{$package}) {
-		warning "package $package is not in control info";
-		return 0;
-	}
-	return $package_types{$package} eq 'udeb';
+	return package_type($package) eq 'udeb';
 }
+
 
 sub process_pkg {
 	my ($package) = @_;
@@ -2184,6 +2268,24 @@ sub _substitution_generator {
 		return $value;
 	};
 }
+
+sub debhelper_script_per_package_subst {
+	my ($package, $provided_subst) = @_;
+	my %vars = %{$provided_subst};
+	$vars{'PACKAGE'} = $package if not exists($vars{'PACKAGE'});
+	for my $var (keys(%{$provided_subst})) {
+		if ($var !~ $Debian::Debhelper::Dh_Lib::MAINTSCRIPT_TOKEN_REGEX) {
+			warning("User defined token ${var} does not match ${Debian::Debhelper::Dh_Lib::MAINTSCRIPT_TOKEN_REGEX}");
+			error("Invalid provided token ${var}: It cannot be substituted as it does not follow the token name rules");
+		}
+		if ($var =~ m/^pkg[.]\Q${package}\E[.](.+)$/) {
+			my $new_key = $1;
+			$vars{$new_key} = $provided_subst->{$var};
+		}
+	}
+	return \%vars;
+}
+
 
 # Handles #DEBHELPER# substitution in a script; also can generate a new
 # script from scratch if none exists but there is a .debhelper file for it.
@@ -2424,25 +2526,58 @@ sub cross_command {
 # variable and returns the computed value.
 sub get_source_date_epoch {
 	return $ENV{SOURCE_DATE_EPOCH} if exists($ENV{SOURCE_DATE_EPOCH});
-	eval { require Dpkg::Changelog::Debian };
-	if ($@) {
-		warning "unable to set SOURCE_DATE_EPOCH: $@";
+	_parse_non_binnmu_date_epoch();
+	return $ENV{SOURCE_DATE_EPOCH};
+}
+
+{
+	my $_non_binnmu_date_epoch;
+
+	# Needed for dh_strip_nondeterminism - not exported by default because it is not likely
+	# to be useful beyond that one helper.
+	sub get_non_binnmu_date_epoch {
+		return $_non_binnmu_date_epoch if defined($_non_binnmu_date_epoch);
+		_parse_non_binnmu_date_epoch();
+		return $_non_binnmu_date_epoch;
+	}
+
+	sub _parse_non_binnmu_date_epoch {
+		eval { require Dpkg::Changelog::Debian };
+		if ($@) {
+			warning "unable to set SOURCE_DATE_EPOCH: $@";
+			return;
+		}
+		eval { require Time::Piece };
+		if ($@) {
+			warning "unable to set SOURCE_DATE_EPOCH: $@";
+			return;
+		}
+
+		my $changelog = Dpkg::Changelog::Debian->new(range => {"count" => 2});
+		$changelog->load("debian/changelog");
+
+		my $first_entry = $changelog->[0];
+		my $non_binnmu_entry = $first_entry;
+		my $optional_fields = $first_entry->get_optional_fields();
+		my $first_tt = $first_entry->get_timestamp();
+		$first_tt =~ s/\s*\([^\)]+\)\s*$//; # Remove the optional timezone codename
+		my $first_timestamp = Time::Piece->strptime($first_tt, "%a, %d %b %Y %T %z")->epoch;
+		my $non_binnmu_timestamp = $first_timestamp;
+		if (exists($optional_fields->{'Binary-Only'}) and lc($optional_fields->{'Binary-Only'}) eq 'yes') {
+			$non_binnmu_entry = $changelog->[1];
+			my $non_binnmu_options = $non_binnmu_entry->get_optional_fields();
+			if (exists($non_binnmu_options->{'Binary-Only'}) and lc($non_binnmu_options->{'Binary-Only'}) eq 'yes') {
+				error("internal error: Could not locate the first non-binnmu entry in the change (assumed it would be the second entry)");
+			}
+			my $non_binnmu_tt = $non_binnmu_entry->get_timestamp();
+			$non_binnmu_tt =~ s/\s*\([^\)]+\)\s*$//; # Remove the optional timezone codename
+			$non_binnmu_timestamp = Time::Piece->strptime($non_binnmu_tt, "%a, %d %b %Y %T %z")->epoch();
+		}
+
+		$ENV{SOURCE_DATE_EPOCH} = $first_timestamp if not exists($ENV{SOURCE_DATE_EPOCH});
+		$_non_binnmu_date_epoch = $non_binnmu_timestamp;
 		return;
 	}
-	eval { require Time::Piece };
-	if ($@) {
-		warning "unable to set SOURCE_DATE_EPOCH: $@";
-		return;
-	}
-
-	my $changelog = Dpkg::Changelog::Debian->new(range => {"count" => 1});
-	$changelog->load("debian/changelog");
-
-	my $tt = @{$changelog}[0]->get_timestamp();
-	$tt =~ s/\s*\([^\)]+\)\s*$//; # Remove the optional timezone codename
-	my $timestamp = Time::Piece->strptime($tt, "%a, %d %b %Y %T %z");
-
-	return $ENV{SOURCE_DATE_EPOCH} = $timestamp->epoch();
 }
 
 # Setup the build ENV by setting dpkg-buildflags (via set_buildflags()) plus
@@ -2469,7 +2604,7 @@ sub setup_home_and_xdg_dirs {
 		XDG_DATA_DIRS
 		XDG_RUNTIME_DIR
 	);
-	install_dir(@paths);
+	mkdirs(@paths);
 	for my $envname (@clear_env) {
 		delete($ENV{$envname});
 	}
@@ -2536,7 +2671,7 @@ sub get_buildoption {
 		} elsif ($opt =~ m/^dherroron=(\S*)$/ && $wanted eq 'dherroron') {
 			my $value = $1;
 			if ($value ne 'obsolete-compat-levels') {
-				warning("Unknown value \"${value}\" as parameter for \"dherrron\" seen in DEB_BUILD_OPTIONS");
+				warning("Unknown value \"${value}\" as parameter for \"dherroron\" seen in DEB_BUILD_OPTIONS");
 			}
 			return $value;
 		} elsif ($opt eq $wanted) {
@@ -2565,7 +2700,7 @@ sub _executable_dh_config_file_failed {
 	# The interpreter did not like the file for some reason.
 	# Lets check if the maintainer intended it to be
 	# executable.
-	if (not is_so_or_exec_elf_file($source) and not _has_shbang_line($source)) {
+	if (not is_so_or_exec_elf_file($source) and not _has_shebang_line($source)) {
 		warning("${source} is marked executable but does not appear to an executable config.");
 		warning();
 		warning("If ${source} is intended to be an executable config file, please ensure it can");
@@ -2585,15 +2720,14 @@ sub _executable_dh_config_file_failed {
 # the package.  Under compat 9+ it may execute the file and use its
 # output instead.
 #
-# install_dh_config_file(SOURCE, TARGET[, MODE])
+# install_dh_config_file(SOURCE, TARGET)
 sub install_dh_config_file {
-	my ($source, $target, $mode) = @_;
-	$mode = 0644 if not defined($mode);
+	my ($source, $target) = @_;
 
 	if (!compat(8) and -x $source) {
 		my @sstat = stat(_) || error("cannot stat $source: $!");
 		open(my $tfd, '>', $target) || error("cannot open $target: $!");
-		chmod($mode, $tfd) || error("cannot chmod $target: $!");
+		chmod(0644, $tfd) || error("cannot chmod $target: $!");
 		open(my $sfd, '-|', $source) || error("cannot run $source: $!");
 		while (my $line = <$sfd>) {
 			print ${tfd} $line;
@@ -2605,7 +2739,7 @@ sub install_dh_config_file {
 		# Set the mtime (and atime) to ensure reproducibility.
 		utime($sstat[9], $sstat[9], $target);
 	} else {
-		_install_file_to_path($mode, $source, $target);
+		install_file($source, $target);
 	}
 	return 1;
 }
@@ -2615,7 +2749,7 @@ sub restore_file_on_clean {
 	my $bucket_index = 'debian/.debhelper/bucket/index';
 	my $bucket_dir = 'debian/.debhelper/bucket/files';
 	my $checksum;
-	install_dir($bucket_dir);
+	mkdirs($bucket_dir);
 	if ($file =~ m{^/}) {
 		error("restore_file_on_clean requires a path relative to the package dir");
 	}
@@ -2723,8 +2857,14 @@ sub log_installed_files {
 	my ($package, @patterns) = @_;
 
 	return if $dh{NO_ACT};
+	my $tool = $TOOL_NAME;
+	if (ref($package) eq 'HASH') {
+		my $options = $package;
+		$tool = $options->{'tool_name'} // error('Missing mandatory "tool_name" option for log_installed_files');
+		$package = $options->{'package'} // error('Missing mandatory "package" option for log_installed_files');
+	}
 
-	my $log = generated_file($package, 'installed-by-' . basename($0));
+	my $log = generated_file($package, 'installed-by-' . $tool);
 	open(my $fh, '>>', $log) or error("open $log: $!");
 	for my $src (@patterns) {
 		print $fh "$src\n";
@@ -2780,7 +2920,7 @@ sub is_so_or_exec_elf_file {
 	return 1;
 }
 
-sub _has_shbang_line {
+sub _has_shebang_line {
 	my ($file) = @_;
 	open(my $fd, '<', $file) or error("open $file: $!");
 	my $line = <$fd>;

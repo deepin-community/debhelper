@@ -1,3 +1,356 @@
+debhelper (13.11.4) unstable; urgency=medium
+
+  [ Peter Pentchev ]
+  * meson.pm: Pass --destdir to `meson install`.  (Closes: #1027014)
+
+ -- Niels Thykier <niels@thykier.net>  Mon, 02 Jan 2023 14:54:26 +0000
+
+debhelper (13.11.3) unstable; urgency=medium
+
+  * Dh_Lib.pm: Have addsubstvars check the value for newlines (Closes: #1026014)
+  * Stop using (fake)root for mkdirs again.
+    Should have been removed as a part of the clean up in the previous
+    upload but was overlooked causing breakage in packages still having
+    `Rules-Requires-Root: binary-targets`. (Closes: #1026125)
+  * PROGRAMMING.md: Fix typos
+
+ -- Niels Thykier <niels@thykier.net>  Thu, 15 Dec 2022 09:07:38 +0000
+
+debhelper (13.11.2) unstable; urgency=medium
+
+  [ Niels Thykier ]
+  * Dh_Lib.pm: Remove unused third parameter from install_dh_config_file
+  * makefile.pm: Provide hook for subclasses to reuse cross-build support
+    (Closes: #1024296)
+  * Dh_Lib.pm: Revert change where `install_{file,prog,lib}` would use chown.
+    The problem that prompted this change was not caused by debhelper but
+    by fakeroot (#1024544) and the change in debhelper would not even
+    function as a work around in this case.  Accordingly, the extra
+    complexity is not worth it and has been reverted.
+
+  [ Jakub Wilk ]
+  * Dh_Lib.pm: Fix typo in warning message about dherroron
+
+ -- Niels Thykier <niels@thykier.net>  Wed, 14 Dec 2022 20:32:18 +0000
+
+debhelper (13.11.1) unstable; urgency=medium
+
+  * Team upload.
+  * Fix missed 3 to 4 arguments conversion in _install_file_to_path call.
+    (Closes: #1024520)
+
+ -- Axel Beckert <abe@debian.org>  Mon, 21 Nov 2022 00:56:24 +0100
+
+debhelper (13.11) unstable; urgency=medium
+
+  [ Gioele Barabucci ]
+  * dh_installchangelogs: Ensure that at least four old entries are preserved
+    (Closes: #1021467)
+
+  [ Andrea Pappacoda ]
+  * meson.pm: Use `meson setup` in the configure step rather than just `meson`.
+
+  [ Niels Thykier ]
+  * Put newest compat level first in documentation
+  * Rename debhelper config files to include package name
+  * dh_installdebconf: Fix typo in manual page
+  * Dh_Lib.pm: `qx_cmd` support env/chdir changes like `doit` (Closes: #1016354)
+  * Remove obsolete compat checks in the code
+  * dh_dwz: Ensure dwz multifile is owned by root:root when root should be used
+  * dh_builddeb: Always pass `--root-owner-group` to `dpkg-deb` for dbgsym packages.
+  * Dh_Lib.pm: Provide `mkdirs` to create (non-package) directories.
+  * Dh_Lib.pm: Make `install_dir` chown created directories when root should be
+    used for debhelper's own commands.  This fixes #1024261 for packages that only
+    use debhelper itself. However, third-party debhelper tools may still cause
+    packages with incorrect ownership for now if they are run after `dh_fixperms`
+    (or `dh_fixperms` is omitted).
+  * Dh_Lib.pm: Ensure `install_{file,prog,lib}` uses chown when root should be used.
+    Previously, they would skip the `chown` call and rely on `dh_fixperms`
+    or `dpkg-deb` to fix the ownership.  However, that could cause issues
+    when the helper was run after `dh_fixperms` and install files that
+    `dpkg-deb` would not reset ownership of.
+
+ -- Niels Thykier <niels@thykier.net>  Sun, 20 Nov 2022 20:02:12 +0000
+
+debhelper (13.10.1) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Luca Boccassi ]
+  * dh_installsysusers: make output reproducible
+
+  [ Jakub Wilk ]
+  * dh_assistant: Suggest json_pp as JSON formatter
+
+  [ Niels Thykier ]
+  * dh_assistant: Fix typo of active-compat-level
+  * dh_installchangelogs: Fix typo of performed
+
+ -- Luca Boccassi <bluca@debian.org>  Fri, 28 Oct 2022 10:48:06 +0100
+
+debhelper (13.10) unstable; urgency=medium
+
+  [ Luca Boccassi ]
+  * Install `installsysusers` sequence (to match the provide).
+
+  [ Gioele Barabucci ]
+  * dh_installchangelogs: Trim old Debian changelog entries
+    automatically.  Distributions can disable this by using
+    `DEB_BUILD_OPTIONS=notrimdch`.
+  * dh_installchangelogs.t: Force locale to be `C.UTF-8` to
+    avoid generating invalid changelog entries under
+    non-default locales.
+
+  [ Andrea Pappacoda ]
+  * meson.pm: Stop providing `MESON_TESTTHREADS` environment
+    variable for the install target.  Said variable only
+    applies for testing.
+  * cmake.pm: Use `cmake --install` in compat 14.
+    (Closes: #1020732)
+  * docs/PROGRAMMING{,.md}: Rewrite PROGRAMMING into markdown.
+
+  [ Michael Biebl ]
+  * dh_installsystemduser: Stop masking user units on package
+    removal.  They should never have been masked in the first
+    place.  See #1021027.
+  * dh_installinit: Remove executable bit of init scripts on
+    package removal (via preinst).  Related to #1021027.
+  * dh_installsystemd: Stop masking system units on package
+    removal.  This is no longer necessary with the init scripts
+    getting their exec bit cleared on package removal.
+    (Closes: #1021027)
+
+  [ Niels Thykier ]
+  * Dh_Lib.pm: Add `package_type` as a function (extracted
+    from `is_udeb`).
+  * Dh_Getopt.pm: Fix duplicated `warning` in output for a
+    particular warning.
+  * dh_assistant: Provide a new `detect-hook-targets` command.
+  * dh: Recommend using `dh_assistant detect-hook-targets` for
+    checking whether hook targets are correct.
+  * dh: Hoist `nodoc` and `nocheck` from `DEB_BUILD_PROFILES`
+    into `DEB_BUILD_OPTIONS` when they are present in the former
+    and absent in the latter.  Emit a warning when doing so to
+    aid the user, so they know why this does not work when they
+    are later building a package that does not use dh.
+    (Closes: #979401)
+  * dh: Provide a warning when cross building an `nocheck` is
+    absent from `DEB_BUILD_OPTIONS` to cross builders, who are
+    not experienced with Debian's requirements for
+    cross-building.  The warning also recommends activating the
+    `cross` build profile and provides a way to disable the
+    warning without using `nocheck` (for the special case, where
+    people have a system that can run host binaries).
+  * Dh_Lib.pm: Fix bug where `addsubstvars` would not respect
+    the `--no-act` parameter.
+  * dh_perl: For scripts that are detected as perl scripts
+    that would trigger a dependency, normalize the shebang line to
+    use the same perl as debhelper is run under (/usr/bin/perl
+    in Debian, YMMV in derivatives).  (Closes: #904409)
+  * dh_assistant: Provide new `log-installed-files` command to
+    help users and third-party tools record which files they have
+    installed.  Third-party tools should use the
+    `--on-behalf-of-cmd` to have their tool name recorded.
+    (Closes: #972724)
+  * dh_installexamples: Explicitly recommend `examples/*` over
+    `examples` as content for the `debian/<pkg>.examples` file
+    to avoid the triggering `.../examples/examples` case.
+    (Closes: #1000384)
+  * debhelper.pod: Clarify the documentation around `-v` +
+    `--verbose` vs. `DH_VERBOSE` vs. `DH_QUIET` and `terse`
+    from `DEB_BUILD_OPTIONS`.  Notably, clarify that `-v`
+    and `DH_VERBOSE` provides the same functionality and
+    that they do not cause *all* commands to be shown.
+    (Closes: #1002464)
+
+  [ Translations ]
+  * Update Portuguese translation (Américo Monteiro)
+    (Closes: #1019231)
+
+ -- Niels Thykier <niels@thykier.net>  Sat, 08 Oct 2022 18:13:35 +0000
+
+debhelper (13.9.1) unstable; urgency=medium
+
+  [ Niels Thykier ]
+  * autoscripts/postinst-init-tmpfiles: Re-instate runtime check
+    before running `systemd-tmpfiles`. However, explicitly check
+    for `systemd-tmpfiles` rather than asserting the system was
+    booted by systemd. This resolves #1013969 without requiring
+    a strict dependency as originally suggested by Guilhem Moulin
+    in #1013969.
+  * dh_installtmpfiles: Remove the `systemd | systemd-tmpfiles`
+    dependency as it is no longer required.  (Closes: #1017441)
+  * dh_installsystemd: Ditto.
+  * dh_installinit: Ditto.
+
+  [ Johannes Schauer Marin Rodrigues ]
+  * autoscripts/postinst-init-tmpfiles: Only pass `--root` to systemd
+    when `DPKG_ROOT` is present (as `--root=/` is different from
+    omitting `--root` entirely).
+  * autoscripts/postinst-sysusers: Ditto
+
+ -- Niels Thykier <niels@thykier.net>  Tue, 30 Aug 2022 15:24:43 +0000
+
+debhelper (13.9) unstable; urgency=medium
+
+  [ Gioele Barabucci ]
+  * d/control: Provide dh-sequence-installsysusers.
+
+  [ Andreas Hübner ]
+  * debhelper.pod: Add missing word "variables".
+
+  [ Niels Thykier ]
+  * Dh_Lib.pm: Fix in addsubstvar where a value was added when
+    it should not have been.  (Closes: #1015263)
+
+ -- Niels Thykier <niels@thykier.net>  Sun, 14 Aug 2022 12:34:54 +0000
+
+debhelper (13.8) unstable; urgency=medium
+
+  [ Niels Thykier ]
+  * dh_perl: Fix incorrect binary versioning caused by a regression
+    in 13.3.  Thanks to Niko Tyni for reporting the issue.
+    (Closes: #997961)
+  * d/control: Bump Standards-Version to 4.6.1 - no changes required.
+  * root_sequence.pm: Run `dh_installsysusers` before
+    `dh_installtmpfiles` (only affects compat 14 or later).  Thanks
+    to Nicholas Brown for the suggestion.  (Closes: #1011099)
+  * autoscripts/postinst-init-tmpfiles: Remove runtime check on the
+    system having systemd as init system.
+  * dh_installtmpfiles: Replace runtime check on the system running
+    under systemd in generated `postinst` script with a dependency
+    on `systemd | systemd-tmpfiles` added to `${misc:Depends}`.
+    Thanks to Guilhem Moulin for the suggestion.  (Closes: #1013969)
+  * dh_installsystemd: Ditto.
+  * dh_installinit: Ditto.
+  * debhelper-compat-upgrade-checklist.pod: Correct description for
+    the addition of dh_installsysusers in compat 14.
+  * meson.pm: Use `meson install` instead of `ninja install` for
+    dh_auto_install in compat 14.  Thanks to Andrea Pappacoda for
+    the suggestion.  (Closes: #1006805)
+
+  [ Max-Julian Pogner ]
+  * Dh_Lib.pm: Remove double semi-colon.  (Closes: #1010591)
+  * Dh_Lib.pm: _strip_spaces now explicitly returns undef on undef
+    argument.
+    (Closes: #1010594)
+
+  [ Andrea Pappacoda ]
+  * cmake.pm: Set FETCHCONTENT_FULLY_DISCONNECTED to true.  This
+    ensures that the `FetchContent` module does not attempt to
+    use internet connection.
+
+  [ Vagrant Cascadian ]
+  * debhelper-compat-upgrade-checklist.pod: Update documentation
+    for compat 14 change.  (Closes: #1011404)
+
+  [ Ferenc Wágner ]
+  * debhelper.pod: Correct link to the new upgrade checklist.
+    (Closes: #1012777)
+
+  [ Luca Boccassi ]
+  * dh_installman: Avoid false positive language detection on
+    shared libs.
+
+  [ Translations ]
+  * Update Portuguese translation (Américo Monteiro)
+    (Closes: #1011256)
+
+ -- Niels Thykier <niels@thykier.net>  Sun, 03 Jul 2022 09:04:23 +0000
+
+debhelper (13.7.1) unstable; urgency=medium
+
+  * debhelper.pod: Fix several typos.  Thanks to Guillem Jover
+    for pointing them out and proposing corrections.
+  * dh_installalternatives: Correct a file check that caused
+    false-positive rejections of valid alternatives files.  Thanks to
+    Hiroyuki YAMAMORI for reporting the bug and providing an initial
+    patch.  (Closes: #1009844)
+
+ -- Niels Thykier <niels@thykier.net>  Wed, 20 Apr 2022 06:17:57 +0000
+
+debhelper (13.7) unstable; urgency=medium
+
+  [ Niels Thykier ]
+  * dh_installalternatives: Improve validation of alternative files to
+    catch some "obvious" copy-waste mistakes.
+  * dh: Invoke dh_installalternatives after dh_link in compat 14 or
+    later. Thanks to Colin Watson for the suggestion.
+    (Closes: #1002800)
+  * cmake.pm: Drop -DCMAKE_SKIP_RPATH=on in compat v14.  Thanks to
+    Vagrant Cascadian for the suggestion and the investigative work on
+    this topic.  (Closes: #1004939)
+  * debhelper-compat-upgrade-checklist.pod: New file.
+  * debhelper.pod: Move list of supported compat levels and the related
+    upgrade checklist into debhelper-compat-upgrade-checklist.pod.
+    This means you now need `man 7 debhelper-compat-upgrade-checklist`
+    to see the upgrade checklist.
+  * dh_installdebconf: Support -D/--define command line parameters
+    (mirroring those from dh_installdeb).
+  * Dh_Lib.pm: Cope with "?=" as assignment operator in substvars files
+    to be future proof with (possible) planned addition of "optional
+    substvars.  At the moment, debhelper will still always use "=" when
+    adding a substvar but it will now preserve "?=" operator if an
+    existing substvar is modified.
+
+  [ Guillem Jover ]
+  * autoconf.pm: Add support for autotest test suites by passing the
+    TESTSUITEFLAGS environment variable to `make test`.
+
+  [ Dave Jones ]
+  * Rewrite handling of stop services to use the `preinst` when using
+    --no-restart-after-upgrade.  This fixes a regression caused by
+    the fix for #989155.  (Closes: #994204)
+
+  [ Johannes Schauer Marin Rodrigues ]
+  * dh_installmenu: Respect DPKG_ROOT when checking for update-menus.
+    Note this implementation assumes update-menus is present both
+    inside and outside the chroot to activate.  If it is absent on
+    either side, the update-menus call is skipped.
+
+  [ Gioele Barabucci ]
+  * dh_installsysusers: Invoke systemd-sysusers even when DPKG_ROOT
+    is set (relying on `--root`).
+  * dh_installpam: In compat 14, install pam snippets into
+    `/usr/lib/pam.d` instead of `/etc/pam.d`.  Remember to remove
+    (now) obsolete conffiles when you bump to compat 14.
+
+  [ Andreas Hübner ]
+  * debhelper.pod: Correct spelling of DEB_BUILD_MAINT_OPTIONS.
+
+ -- Niels Thykier <niels@thykier.net>  Sun, 17 Apr 2022 09:42:46 +0000
+
+debhelper (13.6) unstable; urgency=medium
+
+  [ Niels Thykier ]
+  * dh_assistant: Avoid creating `debian/.debhelper` when the
+    which-build-system sub command is invoked.  Thanks to
+    Jelmer Vernooĳ for spotting that bug.
+  * dh_assistant: Add new active-compat-level command, which
+    outputs information about which compat level is declared
+    and active.  It also tells how the compat level was
+    declared.
+  * Dh_Lib.pm: Add new function, get_non_binnmu_date_epoch,
+    only needed for dh_strip_nondeterminism.
+  * dh_installcron: Add support for `cron.yearly` packaging
+    file.  Thanks to Martin-Éric Racine for the suggestion.
+    (Closes: #1000363)
+  * Dh_Lib.pm: Remove support for compat 5 and 6.
+  * debhelper.pod,debhelper-obsolete-compat.pod: Update to
+    reflect the new status for compat 5 and 6.
+
+  [ Guillem Jover ]
+  * dh: Add missing _ in execute_after example in POD.
+
+  [ Sandro Tosi ]
+  * dh_compress: Exclude .woff and .woff2 by default.
+
+  [ Translations ]
+  * Update Portuguese translation (Américo Monteiro)
+    (Closes: #1000719)
+
+ -- Niels Thykier <niels@thykier.net>  Mon, 20 Dec 2021 12:55:03 +0000
+
 debhelper (13.5.2) unstable; urgency=medium
 
   [ Niels Thykier ]
