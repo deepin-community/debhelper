@@ -8,7 +8,7 @@ package Debian::Debhelper::Buildsystem::cmake;
 
 use strict;
 use warnings;
-use Debian::Debhelper::Dh_Lib qw(%dh compat dpkg_architecture_value error is_cross_compiling get_buildoption);
+use Debian::Debhelper::Dh_Lib qw(%dh compat dpkg_architecture_value error is_cross_compiling get_buildoption print_and_doit);
 use parent qw(Debian::Debhelper::Buildsystem);
 
 my @STANDARD_CMAKE_FLAGS = qw(
@@ -19,6 +19,7 @@ my @STANDARD_CMAKE_FLAGS = qw(
   -DCMAKE_EXPORT_NO_PACKAGE_REGISTRY=ON
   -DCMAKE_FIND_USE_PACKAGE_REGISTRY=OFF
   -DCMAKE_FIND_PACKAGE_NO_PACKAGE_REGISTRY=ON
+  -DFETCHCONTENT_FULLY_DISCONNECTED=ON
 );
 
 my %DEB_HOST2CMAKE_SYSTEM = (
@@ -87,8 +88,8 @@ sub configure {
 	push(@flags, '-DCMAKE_INSTALL_RUNSTATEDIR=/run') if not compat(10);
 	# Speed up installation phase a bit.
 	push(@flags, "-DCMAKE_SKIP_INSTALL_ALL_DEPENDENCY=ON") if not compat(12);
-	# Reproducibility #962474
-	push(@flags, "-DCMAKE_SKIP_RPATH=ON", '-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON') if not compat(13);
+	# Reproducibility #962474 / #1004939
+	push(@flags, '-DCMAKE_BUILD_RPATH_USE_ORIGIN=ON') if not compat(13);
 	if (exists($TARGET_BUILD_SYSTEM2CMAKE_GENERATOR{$backend})) {
 		my $generator = $TARGET_BUILD_SYSTEM2CMAKE_GENERATOR{$backend};
 		push(@flags, "-G${generator}");
@@ -175,6 +176,27 @@ sub test {
 		unshift(@_, "ARGS+=--verbose") if not get_buildoption("terse");
 	}
 	return $this->SUPER::test(@_);
+}
+
+sub install {
+	my $this = shift;
+	my $target = $this->get_targetbuildsystem;
+
+	if (compat(13)) {
+		$target->install(@_);
+	} else {
+		# In compat 14 `cmake --install` is preferred to `make install`,
+		# see https://bugs.debian.org/1020732
+		my $destdir = shift;
+		my %options = (
+			update_env => {
+				'LC_ALL'  => 'C.UTF-8',
+				'DESTDIR' => $destdir,
+			}
+		);
+		print_and_doit(\%options, 'cmake', '--install', $this->get_buildpath, @_);
+	}
+	return 1;
 }
 
 1

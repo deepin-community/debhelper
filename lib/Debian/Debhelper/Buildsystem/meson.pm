@@ -94,7 +94,7 @@ sub configure {
 		my %options = (
 			update_env => { LC_ALL => 'C.UTF-8'},
 		);
-		$this->doit_in_builddir(\%options, "meson", $this->get_source_rel2builddir(), @opts, @_);
+		$this->doit_in_builddir(\%options, "meson", "setup", $this->get_source_rel2builddir(), @opts, @_);
 	};
 	if ($@) {
 		if (-e $this->get_buildpath("meson-logs/meson-log.txt")) {
@@ -130,6 +130,25 @@ sub test {
 			$this->doit_in_builddir('tail', '-v', '-n', '+0', 'meson-logs/testlog.txt');
 		}
 		die $err;
+	}
+	return 1;
+}
+
+sub install {
+	my ($this, $destdir, @args) = @_;
+	my $target = $this->get_targetbuildsystem;
+
+	if (compat(13) or $target->NAME ne 'ninja') {
+		$target->install($destdir, @args);
+	} else {
+		# In compat 14 with meson+ninja, we prefer using "meson install"
+		# over "ninja install"
+		my %options = (
+			update_env => {
+				'LC_ALL' => 'C.UTF-8',
+			}
+		);
+		$this->doit_in_builddir(\%options, 'meson', 'install', '--destdir', $destdir, @args);
 	}
 	return 1;
 }

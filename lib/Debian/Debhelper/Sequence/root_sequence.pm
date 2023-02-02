@@ -48,8 +48,8 @@ my @i = (qw{
 	dh_installinfo
 	dh_installinit
 },
-	$include_if_compat_X_or_newer->(13, 'dh_installtmpfiles'),
 	$include_if_compat_X_or_newer->(14, 'dh_installsysusers'),
+	$include_if_compat_X_or_newer->(13, 'dh_installtmpfiles'),
 	$include_if_compat_X_or_newer->(11, 'dh_installsystemd'),
 	$include_if_compat_X_or_newer->(12, 'dh_installsystemduser'),
 qw{
@@ -64,8 +64,8 @@ qw{
 	dh_installgsettings
 },
 	(!compat(11) ? qw(dh_installinitramfs) : qw()),
+	(compat(13) ? qw(dh_installalternatives) : qw()),
 qw{
-	dh_installalternatives
 	dh_bugfiles
 	dh_ucf
 	dh_lintian
@@ -74,6 +74,9 @@ qw{
 	dh_usrlocal
 
 	dh_link
+},
+	(!compat(13) ? qw(dh_installalternatives) : qw()),
+qw{
 	dh_installwm
 	dh_installxfonts
 	dh_strip_nondeterminism
