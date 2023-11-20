@@ -62,21 +62,21 @@ our @TEST_DH_EXTRA_TEMPLATE_FILES = (qw(
 
 each_compat_subtest {
 	ok(run_dh_tool('dh_installsystemd'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 1);
 	ok(run_dh_tool('dh_clean'));
 
 	ok(run_dh_tool('dh_installsystemd', '--no-start'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 0, 0);
 	ok(run_dh_tool('dh_clean'));
 
 	ok(run_dh_tool('dh_installsystemd', '--no-start', 'foo.service'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 0, 0);
@@ -97,7 +97,7 @@ $TEST_DH_FIXTURE_DIR = '.';
 
 each_compat_subtest {
 	ok(run_dh_tool( 'dh_installsystemd'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 1);
@@ -105,10 +105,11 @@ each_compat_subtest {
 	unit_is_started('foo', 'foo2', 0);
 	ok(run_dh_tool('dh_clean'));
 
+	# Install unit directly below /lib
 	make_path('debian/foo/lib/systemd/system/');
 	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/foo2.service');
 	ok(run_dh_tool('dh_installsystemd'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 1);
@@ -116,27 +117,11 @@ each_compat_subtest {
 	unit_is_started('foo', 'foo2', 1);
 	ok(run_dh_tool('dh_clean'));
 
-
-	# lib -> usr/lib (if we ever support that)
-	make_path('debian/foo/lib/systemd/system/');
-	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/foo2.service');
+	# Install unit directly below /usr/lib
+	make_path('debian/foo/usr/lib/systemd/system/');
+	copy_file('debian/foo2.service', 'debian/foo/usr/lib/systemd/system/foo2.service');
 	ok(run_dh_tool('dh_installsystemd'));
-	ok(-e 'debian/foo/lib/systemd/system/foo2.service');
-	ok(find_script('foo', 'postinst'));
-	unit_is_enabled('foo', 'foo', 1);
-	unit_is_started('foo', 'foo', 1);
-	unit_is_enabled('foo', 'foo2', 1);
-	unit_is_started('foo', 'foo2', 1);
-	ok(run_dh_tool('dh_clean'));
-
-	# lib -> usr/lib with both no-empty (if we ever suport that)
-	make_path('debian/foo/lib/systemd/system/');
-	make_path('debian/foo/lib/systemd/system/');
-	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/foo2.service');
-	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/bar.service');
-	ok(run_dh_tool('dh_installsystemd'));
-	ok(-e 'debian/foo/lib/systemd/system/bar.service');
-	ok(-e 'debian/foo/lib/systemd/system/foo2.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo2.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 1);
@@ -147,7 +132,7 @@ each_compat_subtest {
 	make_path('debian/foo/lib/systemd/system/');
 	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/foo2.service');
 	ok(run_dh_tool('dh_installsystemd', '--no-start'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 0, 0);
@@ -159,7 +144,7 @@ each_compat_subtest {
 	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/foo2.service');
 	ok(run_dh_tool('dh_installsystemd', '-p', 'foo', '--no-start', 'foo.service'));
 	ok(run_dh_tool('dh_installsystemd', '-p', 'foo', 'foo2.service'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
 	unit_is_started('foo', 'foo', 0, 0);
@@ -171,7 +156,7 @@ each_compat_subtest {
 	copy_file('debian/foo2.service', 'debian/foo/lib/systemd/system/foo2.service');
 	ok(run_dh_tool('dh_installsystemd', '-p', 'foo', '--no-enable', 'foo.service'));
 	ok(run_dh_tool('dh_installsystemd', '-p', 'foo', 'foo2.service'));
-	ok(-e 'debian/foo/lib/systemd/system/foo.service');
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 0);
 	unit_is_started('foo', 'foo', 1, 1);
