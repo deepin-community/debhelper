@@ -7,7 +7,7 @@ package Debian::Debhelper::Buildsystem::meson;
 
 use strict;
 use warnings;
-use Debian::Debhelper::Dh_Lib qw(compat dpkg_architecture_value is_cross_compiling doit warning error generated_file);
+use Debian::Debhelper::Dh_Lib qw(compat dpkg_architecture_value is_cross_compiling doit warning error generated_file qx_cmd);
 use parent qw(Debian::Debhelper::Buildsystem);
 
 sub DESCRIPTION {
@@ -48,8 +48,23 @@ sub new {
 	return $this;
 }
 
+sub _get_meson_env {
+	my $update_env = {
+		LC_ALL => 'C.UTF-8',
+	};
+	$update_env->{DEB_PYTHON_INSTALL_LAYOUT} = 'deb' unless $ENV{DEB_PYTHON_INSTALL_LAYOUT};
+	return $update_env;
+}
+
 sub configure {
 	my $this=shift;
+
+	eval { require Dpkg::Version; };
+	error($@) if $@;
+
+	my $output = qx_cmd('meson', '--version');
+	chomp $output;
+	my $version = Dpkg::Version->new($output);
 
 	# Standard set of options for meson.
 	my @opts = (
@@ -62,6 +77,11 @@ sub configure {
 	my $multiarch=dpkg_architecture_value("DEB_HOST_MULTIARCH");
 	push @opts, "--libdir=lib/$multiarch";
 	push(@opts, "--libexecdir=lib/$multiarch") if compat(11);
+	# There was a behaviour change in Meson 1.2.0: previously
+	# byte-compilation wasn't supported, but since 1.2.0 it is on by
+	# default. We can only use this option to turn it off in versions
+	# where the option exists.
+	push(@opts, "-Dpython.bytecompile=-1") if $version >= '1.2.0';
 
 	if (is_cross_compiling()) {
 		# http://mesonbuild.com/Cross-compilation.html
@@ -92,7 +112,7 @@ sub configure {
 	$this->mkdir_builddir();
 	eval {
 		my %options = (
-			update_env => { LC_ALL => 'C.UTF-8'},
+			update_env => _get_meson_env(),
 		);
 		$this->doit_in_builddir(\%options, "meson", "setup", $this->get_source_rel2builddir(), @opts, @_);
 	};
@@ -115,9 +135,7 @@ sub test {
 			# In compat 13 with meson+ninja, we prefer using "meson test"
 			# over "ninja test"
 			my %options = (
-				update_env => {
-					'LC_ALL' => 'C.UTF-8',
-				}
+				update_env => _get_meson_env(),
 			);
 			if ($this->get_parallel() > 0) {
 				$options{update_env}{MESON_TESTTHREADS} = $this->get_parallel();
@@ -144,9 +162,7 @@ sub install {
 		# In compat 14 with meson+ninja, we prefer using "meson install"
 		# over "ninja install"
 		my %options = (
-			update_env => {
-				'LC_ALL' => 'C.UTF-8',
-			}
+			update_env => _get_meson_env(),
 		);
 		$this->doit_in_builddir(\%options, 'meson', 'install', '--destdir', $destdir, @args);
 	}

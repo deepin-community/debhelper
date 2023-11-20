@@ -1,3 +1,68 @@
+debhelper (13.11.8) unstable; urgency=medium
+
+  * Team upload.
+
+  * systemd helpers: install units to /usr.
+
+ -- Helmut Grohne <helmut@subdivi.de>  Wed, 15 Nov 2023 09:10:26 +0100
+
+debhelper (13.11.7) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Gioele Barabucci ]
+  * Trim NEWS when trimming changelog (Closes: #1021607)
+
+  [ Steve Langasek ]
+  * dh_makeshlibs: add compatibility Provides: for 64-bit time_t transition.
+
+  [ Helmut Grohne ]
+  * add new helper and addon: movetousr
+
+ -- Helmut Grohne <helmut@subdivi.de>  Thu, 19 Oct 2023 20:13:43 +0200
+
+debhelper (13.11.6) unstable; urgency=medium
+
+  * Team upload.
+
+  * systemd helpers: Support units below /usr (Closes: #1041159)
+
+ -- Helmut Grohne <helmut@subdivi.de>  Mon, 28 Aug 2023 13:25:23 +0200
+
+debhelper (13.11.5) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Translations ]
+  * Update Portuguese translation (Américo Monteiro)
+    (Closes: #1028159)
+  * Update on German translation of pages (Closes: #1028564)
+
+  [ Tianon Gravi ]
+  * Fix minor typo in DEB_BUILD_OPTIONS warning ("and but not" -> "but not")
+
+  [ Niels Thykier ]
+  * AddonAPI.pm: Correct method name in error message.
+    Thanks to wferi@Github
+
+  [ Diederik de Haas ]
+  * dh_missing: Update link to PROGRAMMING.md.gz
+
+  [ Helmut Grohne ]
+  * cmake.pm: set -DBUILD_TESTING=OFF for nocheck builds
+
+  [ Johannes Schauer Marin Rodrigues ]
+  * autoscripts/postinst-init-tmpfiles: do not output to /dev/null to not hide error messages
+
+  [ Simon McVittie ]
+  * cmake.pm, meson.pm: Set DEB_PYTHON_INSTALL_LAYOUT=deb if not already set
+    (Closes: #1043136)
+  * buildsystems: Give XDG_RUNTIME_DIR spec-compliant u=rwx,og-rwx permissions
+  * meson.pm: Disable Python byte-compilation if the Meson version is new enough
+    (Closes: #1042398)
+
+ -- Aurelien Jarno <aurel32@debian.org>  Mon, 14 Aug 2023 21:07:54 +0200
+
 debhelper (13.11.4) unstable; urgency=medium
 
   [ Peter Pentchev ]
