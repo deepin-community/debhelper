@@ -849,12 +849,12 @@ sub _color {
 		# Support NO_COLOR (https://no-color.org/)
 		$mode //= exists($ENV{'NO_COLOR'}) ? 'never' : 'auto';
 
+		# Initialize with no color, so we are guaranteed to only do this once.
+		$_use_color = 0;
 		if ($mode eq 'auto') {
 			$_use_color = 1 if -t *STDOUT or -t *STDERR;
 		} elsif ($mode eq 'always') {
 			$_use_color = 1;
-		} else {
-			$_use_color = 0;
 		}
 
 		eval {
@@ -1773,13 +1773,15 @@ sub samearch {
 # As a side effect, populates %package_arches and %package_types
 # with the types of all packages (not only those returned).
 my (%package_types, %package_arches, %package_multiarches, %packages_by_type,
-    %package_sections, $sourcepackage, %package_cross_type, %dh_bd_sequences);
+    %package_sections, $sourcepackage, %package_cross_type,
+    %package_t64_compat, %dh_bd_sequences);
 
 # Resets the arrays; used mostly for testing
 sub resetpackages {
 	undef $sourcepackage;
 	%package_types = %package_arches = %package_multiarches =
-	    %packages_by_type = %package_sections = %package_cross_type = ();
+	    %packages_by_type = %package_sections = %package_cross_type = 
+	    %package_t64_compat = ();
 	%dh_bd_sequences = ();
 }
 
@@ -2034,6 +2036,7 @@ sub _parse_debian_control {
 				$package_multiarches{$package} = _strip_spaces($field_values{'multi-arch'} // '');
 				$package_sections{$package} = _strip_spaces($field_values{'section'} // $source_section);
 				$package_cross_type{$package} = $cross_type;
+				$package_t64_compat{$package} = _strip_spaces($field_values{'x-time64-compat'} // '');
 				push(@{$packages_by_type{'all-listed-in-control-file'}}, $package);
 
 				if (defined($build_profiles)) {
@@ -2210,6 +2213,16 @@ sub package_type {
 		return DEFAULT_PACKAGE_TYPE;
 	}
 	return $package_types{$package};
+}
+
+sub t64_compat_name {
+	my ($package) = @_;
+
+	if (! exists $package_t64_compat{$package}) {
+		warning "package $package is not in control info";
+		return '';
+	}
+	return $package_t64_compat{$package};
 }
 
 # Return true if a given package is really a udeb.
@@ -2755,7 +2768,7 @@ sub restore_file_on_clean {
 	}
 	$file =~ s{^\./}{}g;
 	$file =~ s{//++}{}g;
-	if ($file =~ m{^\.} or $file =~ m{/CVS/} or $file =~ m{/\.svn/}) {
+	if ($file =~ m{^\.} or $file =~ m{/CVS/} or $file =~ m{/\.}) {
 		# We do not want to smash a Vcs repository by accident.
 		warning("Attempt to store $file, which looks like a VCS file or");
 		warning("a hidden package file (like quilt's \".pc\" directory)");
