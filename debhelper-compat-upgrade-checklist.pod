@@ -32,17 +32,15 @@ Changes from v14 are:
 
 =item -
 
-The B<dh_auto_install> tool no longer defaults to B<< --destdir=debian/I<package> >>
-for source packages only producing a single binary.  If this behaviour is wanted,
-the package should explicitly activate the B<single-binary> dh addon (e.g., by adding
-B<dh-sequence-single-binary> to B<Build-Depends>) or pass B<--destdir> to
-B<dh_auto_install>.
+The B<single-binary> add-on for B<dh> is no longer implicitly activated by
+source packages that have a single B<Package> stanza in F<debian/control>. If
+the package needs the short-cuts for single-binary packages, it must explicitly
+activate the B<single-binary> add-in.
 
-The rationale for this change is to avoid "surprises" when adding a second binary package
-later.  Previously, debhelper would silently change behaviour often resulting in empty
-binary packages being uploaded to the archive by mistake. With the new behaviour,
-the B<single-binary> addon will detect the mismatch and warn the maintainer of what is
-about to happen.
+This can be done via a B<Build-Depends> on B<dh-sequence-single-binary>.
+
+Any B<--without single-binary> passed to B<dh> to avoid the warning in compat 14
+can now be removed to simplify F<debian/rules> without triggering the warning.
 
 =item -
 
@@ -93,6 +91,30 @@ Packages using the B<dh> sequencer should be aware the following changes:
 
 =item -
 
+The order and placement has changed for B<dh_strip_nondeterminism>,
+B<dh_compress>, and B<dh_fixperm>. Previously, these three commands
+were run in the listed order between B<dh_installxfonts> and
+B<dh_missing>.
+
+Their new placement is after B<dh_missing> (arch:all) or
+B<dh_shlibdeps> (arch:any) and before B<dh_installdeb>. Additionally,
+their new order is B<dh_fixperms>, B<dh_strip_nondeterminism>, and
+then B<dh_compress>.
+
+This change may require updates to third-party add-ons that use either
+of these three commands as anchor or to hook targets for any of these
+commands that made assumptions about the command order.
+
+Additionally, B<dh_strip_nondeterminism> and B<dh_compress> plus any commands added
+by third-party add-ons using these as anchors will no longer be able to rely on the
+mode/ownership normalization by B<dh_fixperms>, which may expose bugs in the form
+of incorrect mode or ownership in the resulting binary package.
+
+Please file any such bugs against the relevant tool. Feel free to include the
+B<debhelper> maintainers in CC.
+
+=item -
+
 The tool B<dh_installsysusers> is now included in the default sequence. This
 helper tool will process systemd sysusers files.
 
@@ -117,8 +139,18 @@ B<dh_installinitramfs> in the default B<dh> sequence.
 
 I<< This item only applies to source packages that have exactly one B<Package> stanza in F<debian/control>. >>
 
+The B<dh_auto_install> command now unconditionally uses B<--destdir=debian/tmp> by default. The special-case
+for source packages building a single binary package is now moved to B<single-binary> B<dh> addon. Note, this
+add-on is activated by default in compat 14 but not in compat 15 (see next bullet item).
+
+=item -
+
+I<< This item only applies to source packages that have exactly one B<Package> stanza in F<debian/control>. >>
+
 The B<dh> sequencer will warn if the B<single-binary> addon is implicitly activated to
-warn maintainers of the pending compat 15 change in B<dh_auto_install>.
+warn maintainers of the pending compat 15 change in B<dh_auto_install>. The implicit
+activation is a transitional feature to reduce the changes of risks with this change.
+In compat 15, the implicit activation will no longer trigger.
 
 Maintainers are urged to either explicitly activate the B<single-binary> addon to
 preserve the existing behaviour (e.g., by adding B<dh-sequence-single-binary> to
@@ -135,7 +167,7 @@ about to happen.
 
 =item -
 
-The B<dh_control> tool now automatically applies relationship substvars to
+The B<dh_gencontrol> tool now automatically applies relationship substvars to
 relevant fields. That means that many substvars such as B<${misc:Depends}>
 and B<${shlibs:Depends}> no longer need to be explicitly mentioned in
 F<debian/control>. This applies to any substvar named after a field that
@@ -207,8 +239,8 @@ when the substvars need tweaking.  The most common case involves using
 the B<-d> option from B<dpkg-shlibdeps> possibly via B<dh_shlibdeps>.
 
 Note: This change will cause false-positives from an unfixed
-B<lintian>. Please check L<https://bugs.debian.org/1067653> for
-B<lintian> support for this change.
+L<lintian(1)>. Please check L<https://bugs.debian.org/1067653> for
+L<lintian(1)> support for this change.
 
 =item -
 
@@ -217,6 +249,40 @@ packages that are B<Essential: yes>.
 
 Note due to the B<dh_gencontrol> change above, any package using B<dh_gencontrol>
 will not have to do anything for this migration.
+
+=item -
+
+When running B<dh_auto_install>, B<debhelper> provided build systems will now ensure
+all paths in the B<destdir> have minimal user permissions (B<chmod -R u+rwX>) to avoid
+weird I<permission denied> errors during builds.
+
+Third-party provided debhelper build systems are recommended to support this as well.
+This can be done by running
+
+     $this->ensure_minimal_permissions($destdir) if not compat(13);
+
+in the B<debhelper> Buildsystem code from their B<sub install> implementation after
+the upstream code has been run.
+
+If you are not using B<dh_auto_install> and you run into weird I<permission denied>
+errors, you can often solve this by running B<chmod -R u+rwX DIRECTORY> after running
+the install target from the upstream build system.
+
+Please take care to check if your package has any special cases for permissions where
+files or directories for some reason must not have the "user write bit" set. Known
+cases are B<*.ali> files and B</etc/sudoers.d>, which B<dh_fixperms> will fix up by
+default.
+
+The problem with uncommon permissions have always been present in theory. However, it
+has become considerable more visible with B<dh_fixperms> being run later in the
+sequence as of compat 14 and with the move to remove B<fakeroot> by default (which
+papered over some of these issues). This change is aimed at mitigating the problem.
+
+=item -
+
+The debhelper configuration files are subject to the following changes:
+
+=over 4
 
 =item -
 
@@ -235,7 +301,7 @@ In compat 15 (or later), this is changed to an error.
 
 =item -
 
-It is now triggers a warning to use a packaging file without the package prefix for
+It now triggers a warning to use a packaging file without the package prefix for
 B<--name> even if the source package only produces one binary package. As example,
 if you had a F<debian/bar.service> with the following snippet in F<debian/rules>:
 
@@ -245,6 +311,21 @@ if you had a F<debian/bar.service> with the following snippet in F<debian/rules>
 Then you need to rename F<debian/bar.service> to F<debian/foo.bar.service>.
 
 In compat 15 (or later), this is changed to an error.
+
+=item -
+
+The default look up rules for B<Dh_Lib> based tools now assume that configuration
+files are no longer named (B<--name>) nor support architecture restrictions by default.
+If you work with a third-party debhelper-like tool and need support for either of these
+features, please file a bug against the tool asking it to declare its configuration
+file with the relevant options in its B<pkgfile> call.
+
+Note that B<debhelper> itself tweaked its rules for most of its tools as well based on
+analysis of usage via B<codesearch.debian.org>. Should you be relying on a feature like
+architecture restrictions for a given config file that is no longer supported, please
+file a feature request for the use-case and it might be restored.
+
+=back
 
 =item -
 
@@ -302,8 +383,15 @@ stable.
 
 =item -
 
-The tool B<dh_installtmpfiles> now runs with --remove on package removal, and
---purge on package purge. systemd v256 is required for the latter.
+The tool B<dh_installtmpfiles> now runs with B<--remove> on package removal, and
+B<--purge> on package purge. systemd v256 is required for the latter.
+
+=item -
+
+The B<dh_lintian> tool no longer accepts architecture specific overrides files
+for packages with B<Multi-Arch: same> in F<debian/control>, since these would
+not be co-installable. Instances affected by this error should migrate to
+L<lintian(1)> architecture specific overrides.
 
 =back
 
@@ -358,8 +446,8 @@ are identical).
 
 =item -
 
-The B<dh_auto_*> helpers now reset the environment variables B<HOME>
-and common B<XDG_*> variable.  Please see description of the
+The B<dh_auto_*> helpers now reset the environment variable B<HOME>
+and the common B<XDG_*> variables.  Please see description of the
 environment variables in L<debhelper(1)/ENVIRONMENT> for how this is handled.
 
 I<This feature changed between debhelper 13 and debhelper 13.2.>
@@ -664,7 +752,7 @@ B<dh_installinfo> incorrectly ignore B<--sourcedir>.
 =item -
 
 The B<perl-makemaker> and B<perl-build> build systems no longer pass
-B<-I.> to perl.  Packages that relies on this behavior can often use the
+B<-I.> to perl.  Packages that rely on this behavior can often use the
 B<PERL5LIB> environment variable as a substitute.  E.g. by adding
 B<export PERL5LIB=.> in their debian/rules file (or similar).
 

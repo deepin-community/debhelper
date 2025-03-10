@@ -36,7 +36,7 @@ B<dh_installchangelogs> does I<not> look into any source directory
 compatibility level 7 or any later) will look for changelog files in
 the source directory (e.g. the root or the F<docs> subdirectory).  It
 will look for F<changelog>, F<changes> and F<history> optionally with
-common extensions (such as F<.txt>, F<.md> and F<.rst>).
+common extensions (such as F<.txt>, F<.md>, F<.rst>, F<.org>, etc.)
 
 If a changelog file is specified and is an F<html> file (determined by file
 extension), it will be installed as F<usr/share/doc/package/changelog.html>
@@ -145,7 +145,7 @@ elsif ($default_upstream=~m/\.html?$/i) {
 sub find_changelog {
 	my ($dir) = @_;
 	my @files=sort glob("$dir/*");
-	foreach my $suffix ('', qw(.txt .md .rst)) {
+	foreach my $suffix ('', qw(.txt .md .rst .org)) {
 		foreach my $name (qw{changelog changes history}) {
 			my @matches=grep {
 				lc basename($_) eq "$name$suffix" && -f $_ && -s _ && ! excludefile($_)
@@ -306,8 +306,24 @@ on_pkgs_in_parallel {
 		next if is_udeb($package);
 	
 		my $tmp=tmpdir($package);
-		my $changelog = pkgfile($package, 'changelog', 1);
-		my $news = pkgfile($package, 'NEWS', 1);
+		my $changelog = pkgfile(
+			{
+				'internal-nameless-variant-handling' => 1,
+				'named'                              => 0,
+				'support-architecture-restriction'   => 0,
+			},
+			$package,
+			'changelog',
+		);
+		my $news = pkgfile(
+			{
+				'internal-nameless-variant-handling' => 1,
+				'named'                              => 0,
+				'support-architecture-restriction'   => 0,
+			},
+			$package,
+			'NEWS',
+		);
 		my $upstream_changelog;
 		my ($upstream_changelog_text, $upstream_changelog_html);
 		my $changelog_from_tmp_dir = 0;
