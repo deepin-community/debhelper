@@ -97,6 +97,8 @@ on libbar1 as follows:
 	
 =cut
 
+# INTROSPECTABLE: CONFIG-FILES NONE
+
 init(options => {
 	"L|libpackage=s@" => \$dh{LIBPACKAGE},
 	"dpkg-shlibdeps-params=s" => \$dh{U_PARAMS},

@@ -72,14 +72,14 @@ each_compat_subtest {
 	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
-	unit_is_started('foo', 'foo', 0, 0);
+	unit_is_started('foo', 'foo', 0, 1);
 	ok(run_dh_tool('dh_clean'));
 
 	ok(run_dh_tool('dh_installsystemd', '--no-start', 'foo.service'));
 	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
-	unit_is_started('foo', 'foo', 0, 0);
+	unit_is_started('foo', 'foo', 0, 1);
 	ok(run_dh_tool('dh_clean'));
 
 	# Quoting #764730
@@ -106,6 +106,15 @@ each_compat_subtest {
 	ok(@foo_postinst);
 	my $matches = @foo_postinst ? grep { m{deb-systemd-invoke start .*foo.service} } `cat @foo_postinst` : -1;
 	ok($matches == 1);
+	ok(run_dh_tool('dh_clean'));
+
+
+	# -n flag #1043063
+	ok(run_dh_tool('dh_installsystemd', '-n'));
+	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
+	ok(! find_script('foo', 'postinst'));
+	unit_is_enabled('foo', 'foo', 0);
+	unit_is_started('foo', 'foo', 0);
 	ok(run_dh_tool('dh_clean'));
 };
 
@@ -161,9 +170,9 @@ each_compat_up_to_and_incl_subtest(13, sub {
 	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
-	unit_is_started('foo', 'foo', 0, 0);
+	unit_is_started('foo', 'foo', 0, 1);
 	unit_is_enabled('foo', 'foo2', 1);
-	unit_is_started('foo', 'foo2', 0, 0);
+	unit_is_started('foo', 'foo2', 0, 1);
 	ok(run_dh_tool('dh_clean'));
 
 	make_path('debian/foo/lib/systemd/system/');
@@ -173,7 +182,7 @@ each_compat_up_to_and_incl_subtest(13, sub {
 	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
-	unit_is_started('foo', 'foo', 0, 0);
+	unit_is_started('foo', 'foo', 0, 1);
 	unit_is_enabled('foo', 'foo2', 1);
 	unit_is_started('foo', 'foo2', 1);
 	ok(run_dh_tool('dh_clean'));
@@ -319,7 +328,7 @@ each_compat_from_and_above_subtest(14, sub {
 	unit_is_enabled('foo', 'foo', 0);
 	unit_is_started('foo', 'foo', 0, 0);
 	unit_is_enabled('foo', 'foo2', 1);
-	unit_is_started('foo', 'foo2', 0, 0);
+	unit_is_started('foo', 'foo2', 0, 1);
 	ok(run_dh_tool('dh_clean'));
 
 	make_path('debian/foo/usr/lib/systemd/system/');
@@ -329,7 +338,7 @@ each_compat_from_and_above_subtest(14, sub {
 	ok(-e 'debian/foo/usr/lib/systemd/system/foo.service');
 	ok(find_script('foo', 'postinst'));
 	unit_is_enabled('foo', 'foo', 1);
-	unit_is_started('foo', 'foo', 0, 0);
+	unit_is_started('foo', 'foo', 0, 1);
 	unit_is_enabled('foo', 'foo2', 1);
 	unit_is_started('foo', 'foo2', 1);
 	ok(run_dh_tool('dh_clean'));

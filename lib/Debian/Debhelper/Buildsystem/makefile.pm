@@ -8,15 +8,11 @@ package Debian::Debhelper::Buildsystem::makefile;
 
 use strict;
 use warnings;
-use Debian::Debhelper::Dh_Lib qw(dpkg_architecture_value escape_shell clean_jobserver_makeflags is_cross_compiling compat
-	should_use_root gain_root_cmd error);
+use Debian::Debhelper::Dh_Lib qw(clean_jobserver_makeflags is_cross_compiling compat
+	should_use_root gain_root_cmd error get_build_tool);
 use parent qw(Debian::Debhelper::Buildsystem);
 
-my %DEB_DEFAULT_TOOLS = (
-	'CC'		=> 'gcc',
-	'CXX'		=> 'g++',
-	'PKG_CONFIG'	=> 'pkg-config',
-);
+my @DEB_DEFAULT_TOOLS = qw(CC CXX PKG_CONFIG);
 
 # make makes things difficult by not providing a simple way to test
 # whether a Makefile target exists. Using -n and checking for a nonzero
@@ -155,13 +151,9 @@ sub build {
 			and $this->_should_inject_cross_build_tools) {
 		# Only inject build tools variables during cross-compile when
 		# makefile is the explicit *main* build system.
-		for my $var (sort(keys(%DEB_DEFAULT_TOOLS))) {
-			my $tool = $DEB_DEFAULT_TOOLS{$var};
-			if ($ENV{$var}) {
-				unshift @_, $var . "=" . $ENV{$var};
-			} else {
-				unshift @_, $var . "=" . dpkg_architecture_value("DEB_HOST_GNU_TYPE") . "-" . $tool;
-			}
+		for my $var (sort(@DEB_DEFAULT_TOOLS)) {
+			my $tool = get_build_tool(tool => $var);
+			unshift @_, "$var=$tool" if $tool;
 		}
 	}
 	if (ref($this) eq 'Debian::Debhelper::Buildsystem::makefile' and not compat(10)) {
@@ -189,9 +181,11 @@ sub install {
 		$this->{_run_make_as_root} = 1;
 	}
 
-	$this->make_first_existing_target(['install'],
+	my $res = $this->make_first_existing_target(['install'],
 		"DESTDIR=$destdir",
 		"AM_UPDATE_INFO_DIR=no", @_);
+	$this->ensure_minimal_permissions($destdir) if not compat(13) and $res;
+	return $res;
 }
 
 sub clean {

@@ -66,14 +66,19 @@ Only used in compat 12 or earlier.  In compat 13+, this file is
 handled by L<dh_installtmpfiles(1)> instead.
 
 If this exists, it is installed into F<usr/lib/tmpfiles.d/> in the
-package build directory. Note that the C<tmpfiles.d> mechanism is
-currently only used by systemd.
+package build directory.
 
 =back
 
 =head1 OPTIONS
 
 =over 4
+
+=item B<-n>, B<--no-scripts>
+
+Do not modify F<postinst>/F<postrm>/F<prerm> scripts.
+
+Note: This option was silently ignored before debhelper/13.24.
 
 =item B<--no-enable>
 
@@ -212,7 +217,7 @@ sub has_sysv_equivalent {
 sub install_unit {
 	my ($package, $script, $pkgsuffix, $path, $installsuffix) = @_;
 	$installsuffix = $installsuffix || $pkgsuffix;
-	my $unit = pkgfile($package, $pkgsuffix);
+	my $unit = pkgfile({'named' => 1}, $package, $pkgsuffix);
 	return if $unit eq '';
 	install_dir($path);
 	install_file($unit, "${path}/${script}.${installsuffix}");
@@ -383,6 +388,10 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 		# only to suport a very specific use case in network-manager.
 		unless ($dh{NO_ALSO}) {
 			push @args, $_ for grep { !$seen{$_}++ } extract_key($path, 'Also');
+			# Ensure excluded units do not sneak back in via Also=.
+			foreach my $x (@{$dh{EXCLUDE}}) {
+				@args = grep !/(^|\/)$x$/, @args;
+			}
 		}
 
 		# Extract unit aliases.
@@ -405,7 +414,7 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 
 	my %options = ('snippet-order' => 'service');
 
-	if (@enable_units) {
+	if (not $dh{NOSCRIPTS} and @enable_units) {
 		for my $unit (@enable_units) {
 			my $snippet = $dh{NO_ENABLE} ? 'postinst-systemd-dont-enable' : 'postinst-systemd-enable';
 			autoscript($package, 'postinst', $snippet, { 'UNITFILE' => $unit }, \%options);
@@ -413,7 +422,7 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 		autoscript($package, 'postrm', 'postrm-systemd', {'UNITFILES' => join(' ', @enable_units) });
 	}
 
-	if (@start_units) {
+	if (not $dh{NOSCRIPTS} and @start_units) {
 		my $replace = { 'UNITFILES' => join(' ', @start_units) };
 
 		if ($dh{RESTART_AFTER_UPGRADE}) {
@@ -436,8 +445,7 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 			unless ($dh{R_FLAG} || $dh{RESTART_AFTER_UPGRADE});
 
 		# stop service only on remove
-		autoscript($package, 'prerm', 'prerm-systemd-restart', $replace, \%options)
-			unless ($dh{NO_START});
+		autoscript($package, 'prerm', 'prerm-systemd-restart', $replace, \%options);
 
 		# Run this with "default" order so it is always after other
 		# service related autosnippets.
