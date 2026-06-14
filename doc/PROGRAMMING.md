@@ -209,7 +209,7 @@ The following keys are also set in the `%dh` hash when you call `init()`:
   is less than or equal to that number, it will return true.
   Looks at `DH_COMPAT` to get the compatibility level.
 
-- `pkgfile($package, $basename)`
+- `pkgfile([$opts,] $package, $basename)`
 
   Pass this command the name of a binary package, and the base name of a
   file, and it will return the actual filename to use. This is used
@@ -219,6 +219,23 @@ The following keys are also set in the `%dh` hash when you call `init()`:
   `debian/package.filename`, and (until compat 15) `debian/filename`
   is also allowable for the `$dh{MAINPACKAGE}`. If the file does not
   exist, nothing is returned.
+
+  Since debhelper/13.17, if the first argument is a hashref, it is taken
+  to be configuration parameter (`$opts`). This hashref can have the
+  following keys:
+
+    * `named`: If set to a truth value, the `pkgfile` can have a `name`
+      segment. This is only useful if it ever makes sense to have multiple
+      files for the same package. This ties to the `--name` parameter
+      for the lookup though `--name` can still be used when this is set
+      to `false`. The default is `false` at compat 14+ and `true` for
+      earlier compat levels.
+
+    * `support-architecture-restriction`: When set to a truth value,
+      the `pkgfile` can have an architecture restriction. The is only
+      useful if the contents can reasonably be architecture specific.
+      The default is `false` at compat 14+ and `true` for earlier
+      compat levels.
 
   If the *entire* behavior of a command, when run without any special
   options, is determined by the existence of 1 or more pkgfiles,
@@ -580,6 +597,13 @@ The following keywords are defined:
 - `pkgfile-logged(X)`: Same as `pkgfile(X)` but it will also register which files
   it handles so `dh_missing` can see it.
 
+- `path(X)`: The helper might read and react to the static path `X`.
+  Note that `X` is path relative to the source root (the directory
+  containing `debian`).
+
+  Example commands are `dh_clean` with `path(debian/clean)` and
+   `dh_missing` with `path(debian/not-installed)`.
+
 - `tmp(X)`: The command might do something if `debian/<package>/X` exists.
 
 - `cli-options(--foo|--bar)`: The command might do something if *either* `--foo`
@@ -595,6 +619,44 @@ The following keywords are defined:
 
 If the hint is present and ALL of the keywords imply that the command can be
 skipped, dh will skip the command.
+
+Note that any noop promise hint is also used for introspection where relevant, see
+[Introspection techniques - config files](#introspection-techniques---config-files).
+
+## Introspection techniques - config files
+
+To make it easier to provide tool assistance for packages using debhelper,
+consider adding introspection hints for the command. These hints have the
+form:
+
+    # INTROSPECTABLE: CONFIG-FILES pkgfile(pkgfileA) pkgfile-logged(pkgfileB) path(debian/foo)
+
+This hint enable commands like `dh_assistant list-guessed-dh-config-files`
+to provide more accurate data on which files are used by which debhelper
+tool. Note that introspection tools will also check for the `NOOP` promise
+listed [Optimization techniques](#optimization-techniques), so there is
+no need to duplicate the hints between both.
+
+The following keywords are defined:
+
+ - `NONE`: Must the only keyword, must be in all caps, and designates that
+   the command does not read any configuration file at all. Examples of
+   such commands are `dh_strip`, `dh_usrlocal`, `dh_auto_*`.
+
+ - `pkgfile(X)`: Like the variant in the `NOOP` promise, the command might
+   read `debian/X` (or `debian/<package>.X`) if it exists.
+
+ - `pkgfile-logged(X)`: Like the variant in the `NOOP` promise, the command might
+   read `debian/X` (or `debian/<package>.X`) if it exists.
+
+ - `path(X)`: Like the variant in the `NOOP` promise, the command might
+   read or react to the static path `X` if it exists. The path given is relative
+   to the  source root (the directory containing the `debian/` directory).
+   Example commands are `dh_clean` with `path(debian/clean)` and
+   `dh_missing` with `path(debian/not-installed)`.
+
+As mentioned, there is no need to repeat any of these if they are already
+present in the `NOOP` promise.
 
 ## Logging helpers and dh_missing
 

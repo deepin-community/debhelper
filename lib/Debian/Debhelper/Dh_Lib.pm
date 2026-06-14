@@ -100,6 +100,7 @@ qw(
 
 	complex_doit
 	escape_shell
+	get_build_tool
 ),
 	# Logging/messaging/error handling
 qw(
@@ -161,6 +162,8 @@ qw(
 	glob_expand_error_handler_warn_and_discard
 	glob_expand_error_handler_silently_ignore
 	glob_expand_error_handler_reject_nomagic_warn_discard
+
+	%SYSTEM_DEFAULT_PATH_DIRS
 ),
 	# Generate triggers, substvars, maintscripts, build-time temporary files
 qw(
@@ -233,7 +236,8 @@ our $PKGVERSION_REGEX = qr/
                  (?: - [0-9A-Za-z.+:~]+ )*   # Optional debian revision (+ upstreams versions with hyphens)
                           /xoa;
 our $MAINTSCRIPT_TOKEN_REGEX = qr/[A-Za-z0-9_.+]+/o;
-our $TOOL_NAME = basename($0);
+our $ME = basename($0);
+our $TOOL_NAME = $ME;
 
 # From Policy 5.1:
 #
@@ -251,11 +255,20 @@ our $PARSE_DH_SEQUENCE_INFO = 0;
 # Safety valve for `dh_assistant`. Not intended for anyone else.
 our $ALLOW_UNSAFE_EXECUTION = 1;
 
+our %SYSTEM_DEFAULT_PATH_DIRS = map { $_ => 1 } qw(
+	/usr/bin
+	/bin
+	/usr/sbin
+	/sbin
+	/usr/games
+);
+
+
 # We need logging in compat 9 or in override/hook targets (for --remaining-packages to work)
 # - This option is a global toggle to disable logs for special commands (e.g. dh or dh_clean)
 # It is initialized during "init".  This implies that commands that never calls init are
 # not dh_* commands or do not need the log
-my $write_log = undef;
+our $WRITE_LOG = undef;
 
 sub init {
 	my %params=@_;
@@ -283,7 +296,10 @@ sub init {
 			if (! $dh{BLOCK_NOOP_WARNINGS}) {
 				warning("You asked that all arch in(dep) packages be built, but there are none of that type.");
 			}
-			exit(0);
+			exit(0) if not $params{'allow_empty_package_selection'};
+			$dh{'_EMPTY_SELECTION'} = 1;
+			# Ensure `DOPACKAGES` is at least defined
+			$dh{DOPACKAGES} = [];
 		}
 		# Clear @ARGV so we do not hit the expensive case below
 		@ARGV = ();
@@ -342,7 +358,9 @@ sub init {
 
 	# Check if packages to build have been specified, if not, fall back to
 	# the default, building all relevant packages.
-	if (! defined $dh{DOPACKAGES} || ! @{$dh{DOPACKAGES}}) {
+	$dh{DOPACKAGES} //= [];
+	my $empty_selection = delete($dh{'_EMPTY_SELECTION'});
+	if (!$empty_selection && ! @{$dh{DOPACKAGES}}) {
 		push @{$dh{DOPACKAGES}}, getpackages('both');
 	}
 
@@ -366,18 +384,18 @@ sub init {
 	$dh{U_PARAMS} //= [];
 
 	if ($params{'inhibit_log'}) {
-		$write_log = 0;
+		$WRITE_LOG = 0;
 	} else {
 		# Only initialize if unset (i.e. avoid overriding an early call
 		# to inhibit_log()
-		$write_log //= 1;
+		$WRITE_LOG //= 1;
 	}
 }
 
 # Ensure the log is written if requested but only if the command was
 # successful.
 sub END {
-	return if $? != 0 or not $write_log;
+	return if $? != 0 or not $WRITE_LOG;
 	# If there is no 'debian/control', then we are not being run from
 	# a package directory and then the write_log will not do what we
 	# expect.
@@ -437,7 +455,7 @@ sub commit_override_log {
 }
 
 sub inhibit_log {
-	$write_log=0;
+	$WRITE_LOG = 0;
 }
 
 # Pass it an array containing the arguments of a shell command like would
@@ -455,8 +473,20 @@ sub escape_shell {
 			# This does make -V"foo bar" turn into "-Vfoo bar",
 			# but that will be parsed identically by the shell
 			# anyway..
-			$word=~s/([\n`\$"\\])/\\$1/g;
-			push @ret, "\"$word\"";
+			#
+			# One special-case is `WORD=foo bar` (or `--opt=foo bar`),
+			# which we will prettify a it.
+
+			if ($word =~ m{^(-*[\w_\-]+)=(.+)$}) {
+				my ($opt, $value) = ($1, $2);
+				$value =~ s/([\n`\$"\\])/\\$1/g;
+				# Prefer `--opt="foo bar"` over `"--opt=foo bar"`
+				push(@ret, "${opt}=\"${value}\"");
+			} else {
+				$word =~ s/([\n`\$"\\])/\\$1/g;
+				push(@ret, "\"$word\"");
+			}
+
 		}
 		else {
 			# This list is from _Unix in a Nutshell_. (except '#')
@@ -465,6 +495,80 @@ sub escape_shell {
 		}
 	}
 	return join(' ', @ret);
+}
+
+sub which_command {
+	my ($cmd) = @_;
+	return $cmd if $cmd =~ m{^/};
+	foreach my $dir (split /:/, $ENV{PATH}) {
+		my $full_path = "$dir/$cmd";
+		return $full_path if -x $full_path;
+	}
+	return undef;
+}
+
+our %TOOL_NAMES = (
+	CC         => 'gcc',
+	CXX        => 'g++',
+	PKG_CONFIG => 'pkg-config',
+	QMAKE      => 'qmake',
+);
+
+# Look up a build tool. It can be specified as tool key in which case it is
+# looked up from the environment falling back to a standard mapping. It can
+# also be specified via the command key as a command name. If both are
+# specified, the tool name (being looked up in the environment and its
+# fallback) takes precedence over the command name.
+#
+# If native is passed as true, _FOR_BUILD is appended to the environment
+# variable and the build architecture tuple is prepended instead of the host
+# one.
+#
+# If resolve is passed as true, the command is always returned as an absolute
+# path.
+#
+# If required is passed as true, the function errors out when no command can
+# be found. Otherwise, it may return undef.
+sub get_build_tool {
+	my (%args) = @_;
+	my $tool = $args{tool};
+	my $cmd = undef;  # unprefixed command name
+	my $resolved;  # absolute path of optionally prefixed $cmd
+	if ($tool) {
+		my $toolvar = $args{native} ? "${tool}_FOR_BUILD" : $tool;
+		$cmd = $ENV{$toolvar};
+		if ($cmd) {
+			verbose_print("Detected build tool $cmd from environment $toolvar.");
+			return $cmd unless $args{resolve} or $args{required};
+			$resolved = which_command($cmd);
+			return $args{resolve} ? $resolved : $cmd if $resolved;
+			unless ($args{required}) {
+				warning("Environment variable $toolvar points to non-existent tool $cmd. Ignoring.");
+				return undef;
+			}
+			error("Command $cmd not found as resolved from environment variable $toolvar");
+		}
+		$cmd = $TOOL_NAMES{$tool};
+	}
+	$cmd //= $args{command};
+	unless ($cmd) {
+		return undef unless $args{required};
+		error("No command known for tool $tool") if $tool;
+		error("No command specified.");
+	}
+	return undef unless $cmd;
+	my $arch = $args{native} ? "BUILD" : "HOST";
+	my $tuple = dpkg_architecture_value("DEB_${arch}_GNU_TYPE");
+	$resolved = which_command("$tuple-$cmd");
+	return $args{resolve} ? $resolved : "$tuple-$cmd" if $resolved;
+	if (is_cross_compiling() and not $args{native}) {
+		return undef unless $args{required};
+		error("Command $tuple-$cmd not found.");
+	}
+	$resolved = which_command($cmd);
+	return $args{resolve} ? $resolved : $cmd if $resolved;
+	return undef unless $args{required};
+	error("Commands $tuple-$cmd and $cmd not found");
 }
 
 # Run a command, and display the command to stdout if verbose mode is on.
@@ -869,12 +973,17 @@ sub _color {
 	return $msg;
 }
 
+sub _tool_name_for_msg {
+	return $TOOL_NAME if $ME eq $TOOL_NAME;
+	return "${ME} (for ${TOOL_NAME})"
+}
+
 # Output an error message and die (can be caught).
 sub error {
 	my ($message) = @_;
 	# ensure the error code is well defined.
 	$! = 255;
-	die(_color($TOOL_NAME, 'bold') . ': ' . _color('error', 'bold red') . ": $message\n");
+	die(_color(_tool_name_for_msg(), 'bold') . ': ' . _color('error', 'bold red') . ": $message\n");
 }
 
 # Output a warning.
@@ -882,7 +991,7 @@ sub warning {
 	my ($message) = @_;
 	$message //= '';
 
-	print STDERR _color($TOOL_NAME, 'bold') . ': ' . _color('warning', 'bold yellow') . ": $message\n";
+	print STDERR _color(_tool_name_for_msg(), 'bold') . ': ' . _color('warning', 'bold yellow') . ": $message\n";
 }
 
 # Returns the basename of the argument passed to it.
@@ -910,7 +1019,7 @@ my ($compat_from_bd, $compat_from_dctrl);
 	my $check_pending_removals = get_buildoption('dherroron', '') eq 'obsolete-compat-levels' ? 1 : 0;
 	my $warned_compat = $ENV{DH_INTERNAL_TESTSUITE_SILENT_WARNINGS} ? 1 : 0;
 	my $declared_compat;
-	my $delared_compat_source;
+	my $declared_compat_source;
 	my $c;
 
 	# Used mainly for testing
@@ -918,6 +1027,8 @@ my ($compat_from_bd, $compat_from_dctrl);
 		undef $c;
 		undef $compat_from_bd;
 		undef $compat_from_dctrl;
+		undef $declared_compat;
+		undef $declared_compat_source;
 	}
 
 	sub _load_compat_info {
@@ -958,7 +1069,7 @@ my ($compat_from_bd, $compat_from_dctrl);
 				}
 				$c = $new_compat;
 			}
-			if ($c >= 15 or (HIGHEST_STABLE_COMPAT_LEVEL//0) > 13) {
+			if ($c >= 15 or ($c == 14 and (HIGHEST_STABLE_COMPAT_LEVEL//0) > 13)) {
 				error("Sorry, debian/compat is no longer a supported source for the debhelper compat level."
 				 . " Please add a Build-Depends on `debhelper-compat (= C)` or add `X-DH-Compat: C` to the source stanza"
 				 . " of d/control and remove debian/compat.");
@@ -966,13 +1077,13 @@ my ($compat_from_bd, $compat_from_dctrl);
 			if ($c >= 13 and not $nowarn) {
 				warning("Use of debian/compat is deprecated and will be removed in debhelper (>= 14~).")
 			}
-			$delared_compat_source = 'debian/compat';
+			$declared_compat_source = 'debian/compat';
 		} elsif ($compat_from_bd != -1) {
 			$c = $compat_from_bd;
-			$delared_compat_source = "Build-Depends: debhelper-compat (= $c)";
+			$declared_compat_source = "Build-Depends: debhelper-compat (= $c)";
 		} elsif ($compat_from_dctrl != -1) {
 			$c = $compat_from_dctrl;
-			$delared_compat_source = "X-DH-Compat: $c";
+			$declared_compat_source = "X-DH-Compat: $c";
 		} elsif (not $nowarn) {
 			# d/compat deliberately omitted since we do not want to recommend users to it.
 			error("Please specify the compatibility level in debian/control. Such as, via Build-Depends: debhelper-compat (= X)");
@@ -992,7 +1103,7 @@ my ($compat_from_bd, $compat_from_dctrl);
 		if (not $c) {
 			_load_compat_info(1);
 		}
-		return ($c, $declared_compat, $delared_compat_source);
+		return ($c, $declared_compat, $declared_compat_source);
 	}
 
 	sub compat {
@@ -1068,7 +1179,46 @@ sub default_sourcedir {
 	sub pkgfile {
 		# NB: $nameless_variant_handling is an implementation-detail; third-party packages
 		# should not rely on it.
-		my ($package, $filename, $nameless_variant_handling) = @_;
+		my ($opts, $package, $filename);
+		my ($nameless_variant_handling, $named, $support_architecture_restriction, $is_bulk_check);
+
+		# !!NOT A PART OF THE PUBLIC API!!
+		# Bulk test used by dh to speed up the can_skip check.   It
+		# is NOT useful for finding the most precise pkgfile.
+
+		if (ref($_[0]) eq 'HASH') {
+			($opts, $package, $filename) = @_;
+			$is_bulk_check = ref($package) eq 'ARRAY';
+			if ($is_bulk_check) {
+				# If `dh` does not have declarative hints to go by, then it must assume all
+				# variants are possible
+				$named = 1;
+				$support_architecture_restriction = 1;
+			}
+
+			$nameless_variant_handling = $opts->{'internal-nameless-variant-handling'}
+				if exists($opts->{'internal-nameless-variant-handling'});
+			$named = $opts->{'named'} if exists($opts->{'named'});
+			$support_architecture_restriction = $opts->{'support-architecture-restriction'}
+				if exists($opts->{'support-architecture-restriction'});
+		} else {
+			($package, $filename) = @_;
+
+			$is_bulk_check = ref($package) eq 'ARRAY';
+			if ($is_bulk_check) {
+				# If `dh` does not have declarative hints to go by, then it must assume all
+				# variants are possible
+				$named = 1;
+				$support_architecture_restriction = 1;
+			}
+		}
+
+		if (compat(13)) {
+			# Before compat 14, these were unconditionally on.
+			$named = 1;
+			$support_architecture_restriction = 1;
+		}
+
 		my (@try, $check_expensive);
 
 		if (not exists($_check_expensive{$filename})) {
@@ -1093,11 +1243,11 @@ sub default_sourcedir {
 		# globally or not.  But if someone is being "clever" then the
 		# cache is reusable and for the general/normal case, it has no
 		# adverse effects.
-		if (defined $dh{NAME}) {
+		if (defined $dh{NAME} and $named) {
 			$filename="$dh{NAME}.$filename";
 		}
 
-		if (ref($package) eq 'ARRAY') {
+		if ($is_bulk_check) {
 			# !!NOT A PART OF THE PUBLIC API!!
 			# Bulk test used by dh to speed up the can_skip check.   It
 			# is NOT useful for finding the most precise pkgfile.
@@ -1115,7 +1265,7 @@ sub default_sourcedir {
 		} else {
 			# Avoid checking for hostarch+hostos unless we have reason
 			# to believe that they exist.
-			if ($check_expensive) {
+			if ($check_expensive and $support_architecture_restriction) {
 				my $cross_type = uc(package_cross_type($package));
 				push(@try,
 					 "debian/${package}.${filename}.".dpkg_architecture_value("DEB_${cross_type}_ARCH"),
@@ -1189,7 +1339,17 @@ sub isnative {
 	}
 
 	# Make sure we look at the correct changelog.
-	my $isnative_changelog = pkgfile($package, 'changelog', 0);
+	local $dh{NAME};
+	delete($dh{NAME});
+	my $isnative_changelog = pkgfile(
+		{
+			'internal-nameless-variant-handling' => 0,
+			'named'                              => 0,
+			'support-architecture-restriction'   => 0,
+		},
+		$package,
+		'changelog',
+	);
 	if (! $isnative_changelog) {
 		$isnative_changelog = "debian/changelog";
 		$cache_key = '_source';
@@ -1205,6 +1365,8 @@ sub isnative {
 	}
 
 	my $res = Dpkg::Changelog::Parse::changelog_parse(
+		filename => $isnative_changelog,
+		# XXX: Backwards compatibility, remove after dpkg 1.24.0.
 		file => $isnative_changelog,
 		compression => 0,
 	);
@@ -1450,7 +1612,7 @@ sub delsubstvar {
 
 	return _update_substvar($substvarfile, sub {
 		my ($line) = @_;
-		return $line if $line !~ m/^\Q${substvar}\E[?]?=/;
+		return $line if $line !~ m/^\Q${substvar}\E[?!]?=/;
 		return;
 	});
 }
@@ -1479,7 +1641,7 @@ sub addsubstvar {
 
 	my $update_logic = sub {
 		my ($line) = @_;
-		return $line if $line !~ m/^\Q${substvar}\E([?]?=)(.*)/;
+		return $line if $line !~ m/^\Q${substvar}\E([?!]?=)(.*)/;
 		my $assignment_type = $1;
 		my %items = map { $_ => 1 } split(", ", $2);
 		$present = 1;
@@ -1669,8 +1831,8 @@ sub filedoublearray {
 	my $expand_patterns = compat(12) ? 0 : 1;
 	my $source;
 	if ($x) {
-		require Cwd;
-		my $cmd=Cwd::abs_path($file);
+		require File::Spec;
+		my $cmd=File::Spec->rel2abs($file);
 		$ENV{"DH_CONFIG_ACT_ON_PACKAGES"} = join(",", @{$dh{"DOPACKAGES"}});
 		open(DH_FARRAY_IN, '-|', $cmd) || error("cannot run $file: $!");
 		delete $ENV{"DH_CONFIG_ACT_ON_PACKAGES"};
@@ -2402,7 +2564,14 @@ sub debhelper_script_subst {
 
 	my $tmp=tmpdir($package);
 	my $ext=pkgext($package);
-	my $file=pkgfile($package,$script);
+	my $file = pkgfile(
+		{
+			'named'                              => 0,
+			'support-architecture-restriction'   => 0,
+		},
+		$package,
+		$script,
+	);
 	my %variables = defined($extra_vars) ? %{$extra_vars} : ();
 	my $service_script = generated_file($package, "${script}.service", 0);
 	my @generated_scripts = ("debian/$ext$script.debhelper", $service_script);
@@ -2891,7 +3060,7 @@ sub restore_file_on_clean {
 		if (not $in_index) {
 			# Copy and then rename so we always have the full copy of
 			# the file in the correct place (if any at all).
-			doit('cp', '-an', '--reflink=auto', $file, "${bucket_dir}/${checksum}.tmp");
+			doit('cp', '-a', '--update=none', '--reflink=auto', $file, "${bucket_dir}/${checksum}.tmp");
 			rename_path("${bucket_dir}/${checksum}.tmp", "${bucket_dir}/${checksum}");
 			print {$fd} "${checksum} ${file}\n";
 		}
@@ -2920,7 +3089,7 @@ sub restore_all_files {
 		#    (otherwise, we would be missing some of the files and have to handle
 		#     that with scary warnings)
 		# 2) The file is always fully restored or in its "pre-restore" state.
-		doit('cp', '-an', '--reflink=auto', $bucket_file, "${bucket_file}.tmp");
+		doit('cp', '-a', '--update=none', '--reflink=auto', $bucket_file, "${bucket_file}.tmp");
 		rename_path("${bucket_file}.tmp", $stored_file);
 	}
 	close($fd);
@@ -3147,6 +3316,14 @@ sub compute_doc_main_package {
 	return $dh{DOC_MAIN_PACKAGE} if $dh{DOC_MAIN_PACKAGE};
 	# In compat 10 (and earlier), there is no auto-detection
 	return $doc_package if compat(10);
+	for my $field ('doc-main-package', 'x-doc-main-package') {
+		next if not exists($package_fields{$doc_package}{$field});
+		my $target_package = $package_fields{$doc_package}{$field};
+		if (not exists($package_fields{$target_package})) {
+			error("Invalid (X-)Doc-Main-Package for ${doc_package}: It points to the package ${target_package}, which is not listed in debian/control");
+		}
+		return $target_package;
+	}
 	my $target_package = $doc_package;
 	# If it is not a -doc package, then docs should be installed
 	# under its own package name.
@@ -3159,7 +3336,7 @@ sub compute_doc_main_package {
 		return $lib_dev if exists($package_fields{$lib_dev});
 		# Technically, we could go look for a libFOO<something>-dev,
 		# but atm. it is presumed to be that much of a corner case
-		# that it warrents an override.
+		# that it warrants an override.
 	}
 	# We do not know; make that clear to the caller
 	return;
@@ -3198,6 +3375,9 @@ sub assert_opt_is_known_package {
 	return 1;
 }
 
+my %_UNSUPPORTED_DPKG_FIELDS = (
+	'commands' => 'Commands',
+);
 
 sub dh_gencontrol_automatic_substvars {
 	my ($package, $substvars_file, $has_dbgsym) = @_;
@@ -3207,6 +3387,7 @@ sub dh_gencontrol_automatic_substvars {
 	require Dpkg::Control::Fields;
 	open(my $sfd, '+<', $substvars_file) or error("open $substvars_file: $!");
 	my @dep_fields = Dpkg::Control::Fields::field_list_pkg_dep();
+	push(@dep_fields, values(%_UNSUPPORTED_DPKG_FIELDS));
 	my %known_dep_fields = map { lc($_) => 1 } @dep_fields;
 	my (%field_vars, $needs_dbgsym);
 	while (my $line = <$sfd>) {
@@ -3257,7 +3438,11 @@ sub dh_gencontrol_automatic_substvars {
 		} else {
 			$field_value = $merge_value;
 		}
-		$pkg_stanza->{$field_name} = $field_value;
+		my $output_field_name = $field_name;
+		if (exists($_UNSUPPORTED_DPKG_FIELDS{$field_name_lc})) {
+			$output_field_name = "XB-${output_field_name}";
+		}
+		$pkg_stanza->{$output_field_name} = $field_value;
 	}
 	open(my $wfd, '>', $rewritten_dctrl) or error("open ${rewritten_dctrl}: $!");
 	$src_stanza->output($wfd);

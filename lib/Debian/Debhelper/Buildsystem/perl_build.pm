@@ -8,7 +8,7 @@ package Debian::Debhelper::Buildsystem::perl_build;
 
 use strict;
 use warnings;
-use Debian::Debhelper::Dh_Lib qw(compat is_cross_compiling perl_cross_incdir warning);
+use Debian::Debhelper::Dh_Lib qw(compat is_cross_compiling perl_cross_incdir warning dpkg_architecture_value get_build_tool);
 use parent qw(Debian::Debhelper::Buildsystem);
 use Config;
 
@@ -58,6 +58,7 @@ sub configure {
 	if ($ENV{CFLAGS} && ! compat(8)) {
 		push @flags, "--config", "optimize=$ENV{CFLAGS} $ENV{CPPFLAGS}";
 	}
+	$ENV{"PKG_CONFIG"} = get_build_tool(tool => "PKG_CONFIG", resolve => 1);
 	if ($ENV{LDFLAGS} && ! compat(8)) {
 		my $ld = $Config{ld};
 		if (is_cross_compiling()) {
@@ -85,6 +86,7 @@ sub install {
 	my $this=shift;
 	my $destdir=shift;
 	$this->do_perl("Build", "install", "--destdir", "$destdir", "--create_packlist", 0, @_);
+	$this->ensure_minimal_permissions($destdir) if not compat(13);
 }
 
 sub clean {

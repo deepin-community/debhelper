@@ -114,7 +114,7 @@ sub contains_install_section {
 
 sub install_user_unit {
 	my ($package, $name, $suffix, $path) = @_;
-	my $unit = pkgfile($package, "user.$suffix");
+	my $unit = pkgfile({'named' => 1}, $package, "user.$suffix");
 	return if $unit eq '';
 
 	install_dir($path);
@@ -238,6 +238,10 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 		# cannot read the unit file when disabling as it has already
 		# been deleted.
 		push @args, $_ for grep { !$seen{$_}++ } extract_key($path, 'Also');
+		# Ensure excluded units do not sneak back in via Also=.
+		foreach my $x (@{$dh{EXCLUDE}}) {
+			@args = grep !/(^|\/)$x$/, @args;
+		}
 
 		push @enable_units, $name if contains_install_section($path);
 		push @start_units, $name;
@@ -247,10 +251,6 @@ foreach my $package (@{$dh{DOPACKAGES}}) {
 	@start_units = map { quote($_) } sort(uniq(@start_units));
 
 	if (@enable_units) {
-		# The generated maintainer script code blocks use the --user
-		# option that was added to deb-systemd-helper in version 1.52.
-		addsubstvar($package, 'misc:Depends', 'init-system-helpers', ">= 1.52");
-
 		my $postinst = $dh{NO_ENABLE} ? 'postinst-systemd-user-dont-enable' : 'postinst-systemd-user-enable';
 		foreach my $unit (@enable_units) {
 			autoscript($package, 'postinst', $postinst, { 'UNITFILE' => $unit });

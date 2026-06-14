@@ -76,6 +76,8 @@ deleted by B<dh_clean> later.
 
 =cut
 
+# INTROSPECTABLE: CONFIG-FILES pkgfile(files)
+
 init(options => {
 	"sourcedir=s" => \$dh{SOURCEDIR},	
 });
@@ -84,7 +86,14 @@ my $ret=0;
 
 foreach my $package (@{$dh{DOPACKAGES}}) {
 	my $tmp=tmpdir($package);
-	my $files=pkgfile($package,"files");
+	my $files=pkgfile(
+		{
+			'named'                              => 0,
+			'support-architecture-restriction'   => 0,
+		},
+		$package,
+		"files",
+	);
 
 	my $sourcedir="debian/tmp";
 	if ($dh{SOURCEDIR}) {

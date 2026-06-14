@@ -41,7 +41,7 @@
         "man:deb-substvars(5)"
       ],
       "debhelper-commands": [
-        "dh_installdeb"
+        "dh_gencontrol"
       ]
     },
 
@@ -545,7 +545,15 @@
     {
       "detection-method": "dh.pkgfile",
       "pkgfile": "modprobe",
-      "install-pattern": "etc/modprobe.d/{name}.conf",
+      "dh-compat-rules": [
+        {
+          "starting-with-compat-level": 14,
+          "install-pattern": "usr/lib/modprobe.d/{name}.conf"
+        },
+        {
+          "install-pattern": "etc/modprobe.d/{name}.conf"
+        }
+      ],
       "file-categories": [
         "ppf-file"
       ],
@@ -564,7 +572,7 @@
         "dh-file-list"
       ],
       "debhelper-commands": [
-        "dh_installmodules"
+        "dh_ucf"
       ]
     },
 
@@ -686,7 +694,7 @@
       ],
       "packageless-is-fallback-for-all-packages": true
     },
-        {
+    {
       "detection-method": "dh.pkgfile",
       "pkgfile": "NEWS",
       "install-pattern": "usr/share/doc/{owning_package}/Debian.NEWS",
