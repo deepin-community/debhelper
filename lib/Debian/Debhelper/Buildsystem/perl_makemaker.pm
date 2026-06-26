@@ -8,7 +8,7 @@ package Debian::Debhelper::Buildsystem::perl_makemaker;
 
 use strict;
 use warnings;
-use Debian::Debhelper::Dh_Lib qw(compat is_cross_compiling perl_cross_incdir warning);
+use Debian::Debhelper::Dh_Lib qw(compat is_cross_compiling perl_cross_incdir warning dpkg_architecture_value);
 use parent qw(Debian::Debhelper::Buildsystem::makefile);
 use Config;
 
@@ -31,6 +31,12 @@ sub check_auto_buildable {
 	}
 	return 0;
 }
+
+sub _get_pkgconf {
+	my $toolprefix = is_cross_compiling() ? dpkg_architecture_value("DEB_HOST_GNU_TYPE") . "-" : "";
+	return "/usr/bin/" . $toolprefix . "pkg-config";
+}
+
 
 sub new {
 	my $class=shift;
@@ -66,6 +72,7 @@ sub configure {
 			if is_cross_compiling() and defined $cross_flag;
 		push @flags, "LD=$ld $ENV{CFLAGS} $ENV{LDFLAGS}";
 	}
+	$ENV{"PKG_CONFIG"} = _get_pkgconf() if not exists($ENV{"PKG_CONFIG"});
 
 	push(@perl_flags, '-I.') if compat(10);
 
@@ -99,6 +106,7 @@ sub install {
 	else {
 		$this->SUPER::install($destdir, "PREFIX=/usr", @_);
 	}
+	$this->ensure_minimal_permissions($destdir) if not compat(13);
 }
 
 1

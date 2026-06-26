@@ -41,7 +41,7 @@
         "man:deb-substvars(5)"
       ],
       "debhelper-commands": [
-        "dh_installdeb"
+        "dh_gencontrol"
       ]
     },
 
@@ -686,7 +686,7 @@
       ],
       "packageless-is-fallback-for-all-packages": true
     },
-        {
+    {
       "detection-method": "dh.pkgfile",
       "pkgfile": "NEWS",
       "install-pattern": "usr/share/doc/{owning_package}/Debian.NEWS",
